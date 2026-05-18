@@ -1,11 +1,26 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.venv/
 *.egg-info/
 dist/
 build/
 .pytest_cache/
+.mypy_cache/
+.venv/
+*.so
+
+# ReqFlow
 .dev-workflow/
 .reqflow/
-CLAUDE.md
+
+# Dev artifacts
+docs/
+.planning/
+.claude/
+
+# IDE / OS
+.DS_Store
+.env
+.env.local
+*.log
