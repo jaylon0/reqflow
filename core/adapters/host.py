@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +13,10 @@ from .base import ModelAdapter, ModelResponse, ToolResult, TokenUsage
 class HostAgentAdapter(ModelAdapter):
     """Adapter that communicates via TaskPacket/ResultPacket file protocol."""
 
-    def __init__(self, run_dir: str | None = None):
+    def __init__(self, run_dir: str | None = None, timeout_seconds: int = 120):
         self._run_dir = run_dir or ".reqflow/runs/default"
         self._step_count = 0
+        self._timeout_seconds = timeout_seconds
 
     @property
     def name(self) -> str:
@@ -37,11 +39,43 @@ class HostAgentAdapter(ModelAdapter):
             "required_tools": required_tools or [],
             "expected_artifacts": expected_artifacts or [],
             "acceptance_criteria": acceptance_criteria or [],
+            "created_at": time.time(),
         }
         task_file = Path(self._run_dir) / "task.json"
         task_file.write_text(json.dumps(packet, indent=2, ensure_ascii=False))
         packet["task_file"] = str(task_file)
         return packet
+
+    def _check_timeout(self) -> bool:
+        """Check if the current task has timed out."""
+        task_file = Path(self._run_dir) / "task.json"
+        if not task_file.exists():
+            return False
+        try:
+            task_data = json.loads(task_file.read_text())
+            created_at = task_data.get("created_at", 0)
+            if created_at and (time.time() - created_at) > self._timeout_seconds:
+                return True
+        except (json.JSONDecodeError, OSError):
+            pass
+        return False
+
+    def _mark_timeout(self) -> None:
+        """Mark the current task as timed out and add recovery info."""
+        task_file = Path(self._run_dir) / "task.json"
+        if not task_file.exists():
+            return
+        try:
+            task_data = json.loads(task_file.read_text())
+            task_data["timeout_at"] = time.time()
+            task_data["recovery"] = {
+                "instructions": "Task timed out. To resume: submit a result.json with status and summary, then call again.",
+                "result_file": str(Path(self._run_dir) / "result.json"),
+                "task_file": str(task_file),
+            }
+            task_file.write_text(json.dumps(task_data, indent=2, ensure_ascii=False))
+        except (json.JSONDecodeError, OSError):
+            pass
 
     def call(
         self,
@@ -79,6 +113,18 @@ class HostAgentAdapter(ModelAdapter):
             except (json.JSONDecodeError, OSError):
                 pass
 
+        # Check for timeout on existing task
+        if self._check_timeout():
+            self._mark_timeout()
+            return ModelResponse(
+                content=f"[TIMEOUT] Host agent 未在 {self._timeout_seconds} 秒内响应。"
+                        f"请检查 task.json 并提交 result.json 以恢复执行。",
+                tool_calls=[],
+                tokens=TokenUsage(),
+                raw={"status": "timeout", "timeout_seconds": self._timeout_seconds},
+            )
+
+        # Create new task packet
         task_packet = self.create_task_packet(
             stage_id=f"step-{self._step_count}",
             stage_name=f"Step {self._step_count}",
