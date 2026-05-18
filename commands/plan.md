@@ -3,7 +3,7 @@ description: Create an acceptance or test plan for a requirement.
 argument-hint: "[requirement]"
 ---
 
-Use the `requirement-flow-plugin:test-plan` skill for this request.
+Use the `reqflow:test-plan` skill for this request.
 
 Input:
 

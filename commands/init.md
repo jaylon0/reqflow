@@ -3,7 +3,7 @@ description: Scan the current project and prepare the minimum Requirement Flow c
 argument-hint: "[project context request]"
 ---
 
-Use the `requirement-flow-plugin:context-bootstrap` skill for this request.
+Use the `reqflow:context-bootstrap` skill for this request.
 
 Input:
 

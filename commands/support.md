@@ -3,7 +3,7 @@ description: Route an explicit auxiliary support request outside the main Requir
 argument-hint: "[support request]"
 ---
 
-Use the `requirement-flow-plugin:support-router` skill for this request.
+Use the `reqflow:support-router` skill for this request.
 
 Input:
 

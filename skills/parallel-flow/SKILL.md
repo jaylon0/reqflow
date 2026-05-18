@@ -1,3 +1,8 @@
+---
+name: parallel-flow
+description: Use when multiple independent tasks can be executed simultaneously - dispatches parallel agents and aggregates results
+---
+
 # parallel-flow
 
 并行 agent 调度 skill。用于同时执行多个任务。

@@ -1,10 +1,22 @@
 {
   "name": "reqflow",
-  "version": "2.0.0",
-  "description": "工作流编排引擎，支持需求分析、图编排、并行执行、会话持久化",
+  "version": "2.3.0",
+  "description": "从需求到交付的 AI Engineering Harness：上下文管理、工具系统、执行编排、状态记忆、评估观测、约束恢复",
   "author": {
     "name": "ReqFlow Maintainers"
   },
+  "homepage": "https://github.com/jaylon0/reqflow",
+  "repository": "https://github.com/jaylon0/reqflow",
+  "license": "MIT",
+  "keywords": [
+    "harness",
+    "engineering",
+    "orchestration",
+    "workflow",
+    "agent",
+    "mcp",
+    "delivery"
+  ],
   "skills": "./skills/",
   "mcp": "./mcp.json",
   "interface": {

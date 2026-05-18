@@ -1,3 +1,8 @@
+---
+name: trace-flow
+description: Use when needing to view or export execution trace data and timeline from workflow runs
+---
+
 # trace-flow
 
 执行追踪 skill。用于查看和导出执行追踪数据。

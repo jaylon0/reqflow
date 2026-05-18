@@ -3,7 +3,7 @@ description: Run the Requirement Flow loop engine for a failed check, review fin
 argument-hint: "[failure, finding, or blocker]"
 ---
 
-Use the `requirement-flow-plugin:loop-engine` skill for this request.
+Use the `reqflow:loop-engine` skill for this request.
 
 Input:
 

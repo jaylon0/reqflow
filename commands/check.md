@@ -5,11 +5,11 @@ argument-hint: "[check target]"
 
 Choose the narrowest matching Requirement Flow skill for this request:
 
-- `requirement-flow-plugin:build` for local build, test, lint, or typecheck checks.
-- `requirement-flow-plugin:verify-api` for HTTP or API verification.
-- `requirement-flow-plugin:verify-ui` for UI or browser verification.
-- `requirement-flow-plugin:verify-message` for message, event, or job verification.
-- `requirement-flow-plugin:verify-rpc` for service or RPC verification.
+- `reqflow:build` for local build, test, lint, or typecheck checks.
+- `reqflow:verify-api` for HTTP or API verification.
+- `reqflow:verify-ui` for UI or browser verification.
+- `reqflow:verify-message` for message, event, or job verification.
+- `reqflow:verify-rpc` for service or RPC verification.
 
 Input:
 

@@ -1,3 +1,8 @@
+---
+name: using-reqflow
+description: Use when the user provides a requirement, PRD, issue, bug, or feature request - guides the full workflow from requirements analysis to code delivery
+---
+
 # using-reqflow
 
 ReqFlow 主流程入口。引导用户完成从需求到交付的全流程。

@@ -1,3 +1,8 @@
+---
+name: checkpoint-flow
+description: Use when needing to create, restore, or list checkpoints - supports session persistence and resumable workflows
+---
+
 # checkpoint-flow
 
 Checkpoint 管理 skill。用于创建、恢复和列出检查点。
