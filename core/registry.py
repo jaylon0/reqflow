@@ -45,3 +45,25 @@ class RuntimeRegistry:
 
     def list_runtimes(self) -> list[str]:
         return list(self._configs.keys())
+
+    def check_readiness(self, name: str) -> tuple[bool, str]:
+        """Check if a runtime is ready to execute."""
+        config = self.get(name)
+
+        if config.name in ("manual", "host"):
+            return True, ""
+
+        if config.env_key:
+            import os
+            api_key = config.api_key or os.environ.get(config.env_key, "")
+            if api_key:
+                return True, ""
+            return False, f"未配置 {config.display_name} API key (环境变量 {config.env_key})"
+
+        if config.api_key:
+            return True, ""
+
+        if not config.env_key and not config.api_base:
+            return True, ""
+
+        return False, f"未配置 {config.display_name} 的 API 凭证"
