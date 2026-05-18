@@ -557,6 +557,14 @@ async def _handle_dashboard(arguments: dict) -> list:
     except Exception as exc:
         return [TextContent(type="text", text=f"[错误] 无法读取状态文件: {exc}")]
 
+    # Build step_statuses from stage_records
+    step_statuses = {}
+    for record in data.get("stage_records", []):
+        name = record.get("name", "")
+        status_val = record.get("status", "")
+        if name and status_val:
+            step_statuses[name] = status_val
+
     # 构造 status dict
     status = {
         "run_id": data.get("run_id", "?"),
@@ -565,9 +573,10 @@ async def _handle_dashboard(arguments: dict) -> list:
         "current_stage": data.get("current_stage", "?"),
         "completed_modules": data.get("completed_modules", []),
         "steps_executed": len(data.get("completed_modules", [])),
-        "step_statuses": {},
+        "step_statuses": step_statuses,
         "checkpoints": len(data.get("checkpoints", [])),
         "memory_entries": len(data.get("memory", {}).get("short_term", [])),
+        "stage_records": data.get("stage_records", []),
     }
 
     output = dashboard.format_status(status)

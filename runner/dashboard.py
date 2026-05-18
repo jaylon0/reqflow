@@ -29,8 +29,29 @@ class Dashboard:
         if step_statuses:
             lines.append(f"\n--- Step Status ---")
             for name, st in step_statuses.items():
-                marker = "OK" if st == "success" else "FAIL" if st == "failure" else st.upper()
-                lines.append(f"  [{marker:6s}] {name}")
+                marker = "OK" if st == "success" else "FAIL" if st == "failure" else "TIMEOUT" if st == "timeout" else st.upper()
+                lines.append(f"  [{marker:7s}] {name}")
+
+        # Show stage artifacts
+        stage_records = status.get("stage_records", [])
+        if stage_records:
+            lines.append(f"\n--- Stage Artifacts ---")
+            for record in stage_records:
+                name = record.get("name", "?")
+                content = record.get("content", "")
+                error = record.get("error", "")
+                if content:
+                    preview = content[:100] + ("..." if len(content) > 100 else "")
+                    lines.append(f"  {name}: {preview}")
+                elif error:
+                    lines.append(f"  {name}: [ERROR] {error}")
+
+        # Show recovery info if any timeout
+        has_timeout = any(st == "timeout" for st in step_statuses.values())
+        if has_timeout:
+            lines.append(f"\n--- Recovery ---")
+            lines.append(f"  检测到超时。请检查 task.json 并提交 result.json 以恢复执行。")
+            lines.append(f"  使用: reqflow host-task status <run_dir> 查看详情")
 
         lines.append(f"\nCheckpoints: {status.get('checkpoints', 0)}")
         lines.append(f"Memory:      {status.get('memory_entries', 0)} entries")
