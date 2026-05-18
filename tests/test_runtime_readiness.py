@@ -35,3 +35,21 @@ def test_runtime_readiness_manual_always_ready():
     registry = RuntimeRegistry()
     ready, reason = registry.check_readiness("manual")
     assert ready is True
+
+
+def test_default_runtime_prefers_host_over_api():
+    """Default runtime detection should prefer host over external API runtimes."""
+    registry = RuntimeRegistry()
+    saved_keys = {}
+    for provider in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"):
+        saved_keys[provider] = os.environ.pop(provider, None)
+    try:
+        from reqflow.runner.mcp_server import _detect_runtime
+        config = _detect_runtime(registry)
+        assert config is not None
+        assert config.name not in ("claude", "gpt", "gemini", "deepseek"), \
+            f"Default runtime should not be external API without key, got {config.name}"
+    finally:
+        for k, v in saved_keys.items():
+            if v is not None:
+                os.environ[k] = v

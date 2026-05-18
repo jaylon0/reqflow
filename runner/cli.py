@@ -448,10 +448,9 @@ def _read_requirement(text_or_path: str) -> str:
 
 
 def _detect_runtime(registry: RuntimeRegistry) -> "RuntimeConfig | None":
-    """尝试自动检测合适的 runtime。"""
+    """自动检测 runtime。优先级：环境变量 > host > manual > 有 key 的外部 runtime。"""
     import os
 
-    # 优先检查环境变量
     env_runtime = os.environ.get("REQFLOW_RUNTIME", "").lower()
     if env_runtime:
         try:
@@ -459,18 +458,28 @@ def _detect_runtime(registry: RuntimeRegistry) -> "RuntimeConfig | None":
         except ValueError:
             pass
 
-    # 按优先级尝试: claude > gpt > gemini > deepseek
-    for name in ("claude", "gpt", "gemini", "deepseek"):
+    for name in ("host",):
         try:
             return registry.get(name)
         except ValueError:
             continue
 
-    # 最后尝试 manual
     try:
         return registry.get("manual")
     except ValueError:
-        return None
+        pass
+
+    for name in ("claude", "gpt", "gemini", "deepseek"):
+        try:
+            config = registry.get(name)
+            if config.env_key and os.environ.get(config.env_key):
+                return config
+            if config.api_key:
+                return config
+        except ValueError:
+            continue
+
+    return None
 
 
 def _status_icon(status: str) -> str:

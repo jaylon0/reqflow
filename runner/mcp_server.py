@@ -743,7 +743,7 @@ TOOL_HANDLERS = {
 
 
 def _detect_runtime(registry) -> object | None:
-    """尝试自动检测合适的 runtime。"""
+    """自动检测 runtime。优先级：环境变量 > host > manual > 有 key 的外部 runtime。"""
     import os
 
     env_runtime = os.environ.get("REQFLOW_RUNTIME", "").lower()
@@ -753,7 +753,7 @@ def _detect_runtime(registry) -> object | None:
         except ValueError:
             pass
 
-    for name in ("claude", "gpt", "gemini", "deepseek"):
+    for name in ("host",):
         try:
             return registry.get(name)
         except ValueError:
@@ -762,7 +762,19 @@ def _detect_runtime(registry) -> object | None:
     try:
         return registry.get("manual")
     except ValueError:
-        return None
+        pass
+
+    for name in ("claude", "gpt", "gemini", "deepseek"):
+        try:
+            config = registry.get(name)
+            if config.env_key and os.environ.get(config.env_key):
+                return config
+            if config.api_key:
+                return config
+        except ValueError:
+            continue
+
+    return None
 
 
 # ---------------------------------------------------------------------------
