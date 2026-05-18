@@ -1,0 +1,25 @@
+name: claude
+display_name: "Claude Code"
+
+capabilities:
+  supports_agent_tools: true
+  supports_bash: true
+  supports_file_edit: true
+  supports_image: true
+  max_context_tokens: 200000
+
+tool_mapping:
+  read_file: "Read"
+  edit_file: "Edit"
+  bash: "Bash"
+  agent: "Agent"
+
+context_format:
+  system_prompt_template: "templates/system-prompt.md"
+  skill_format: "markdown"
+  artifact_format: "markdown"
+
+paths:
+  run_dir: ".dev-workflow/runs/"
+  state_file: "state.json"
+  log_file: "execution.log"

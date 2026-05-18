@@ -1,0 +1,131 @@
+{
+  "run_id": "2026-05-12-example",
+  "project": "",
+  "requirement": "",
+  "change_id": "",
+  "repos": [],
+  "branch_by_repo": {},
+  "current_step": 0,
+  "completed_steps": [],
+  "step_status": "initialized",
+  "blocked_reason": "",
+  "spec_status": "draft",
+  "constitution_checks": [],
+  "context_engine": {
+    "graph_status": "missing",
+    "rag_status": "missing",
+    "last_graph_version": "",
+    "last_index_version": ""
+  },
+  "quality_gates": {
+    "design_approved": false,
+    "tdd_required": false,
+    "review_passed": false,
+    "verification_passed": false
+  },
+  "archive_status": "not_started",
+  "spec_governance": {
+    "status": "not_started",
+    "artifact_paths": [],
+    "blockers": [],
+    "last_updated_at": "",
+    "evidence_refs": []
+  },
+  "delivery_verification": {
+    "status": "not_started",
+    "artifact_paths": [],
+    "blockers": [],
+    "last_updated_at": "",
+    "evidence_refs": []
+  },
+  "archive": {
+    "status": "not_started",
+    "artifact_paths": [],
+    "blockers": [],
+    "last_updated_at": "",
+    "evidence_refs": []
+  },
+  "workflow_intelligence": {
+    "scenario_status": "missing",
+    "profile_status": "missing",
+    "checklist_status": "missing",
+    "compliance_status": "missing",
+    "capability_trace_status": "missing"
+  },
+  "agent_execution": {
+    "mode": "supervised_agents",
+    "status": "not_started",
+    "current_work_item": "",
+    "current_agent_id": "",
+    "work_items_path": "agent/work_items.json",
+    "repair_round": 0,
+    "max_repair_rounds": 3,
+    "dispatch_history": []
+  },
+  "memory_contract": {
+    "global_hints_loaded": false,
+    "local_lessons_path": "agent/lessons-learned.md",
+    "evolution_report_path": "agent/evolution-report.md"
+  },
+  "current_scenario": {
+    "id": "",
+    "name": "",
+    "confidence": 0,
+    "alternatives": []
+  },
+  "guideline_profile": {
+    "name": "standard-delivery",
+    "source": "default",
+    "severity": "balanced",
+    "ruleset": []
+  },
+  "compliance_status": "missing",
+  "evolution_status": "not_started",
+  "current_module": "",
+  "planned_modules": [
+    {
+      "id": "module-example",
+      "name": "Example module",
+      "status": "pending",
+      "authorized_scope": {
+        "modules": [],
+        "files": []
+      }
+    }
+  ],
+  "completed_modules": [],
+  "authorized_scope": {
+    "modules": [],
+    "files": [],
+    "reason": ""
+  },
+  "max_retries": 3,
+  "failure_fingerprints": {},
+  "current_loop_id": "",
+  "pending_confirmations": [],
+  "last_stable_step": 0,
+  "last_stable_artifact": "",
+  "artifact_paths": {
+    "memory": "memory.md",
+    "prd_summary": "01_prd_summary.md",
+    "spec_delta": "02_spec_delta.md",
+    "workflow_intelligence": "03_workflow_intelligence.md",
+    "context_discovery": "04_context_discovery.md",
+    "tech_plan": "05_tech_plan.md",
+    "impl_plan": "06_impl_plan.md",
+    "agent_execution": "07_agent_execution.md",
+    "code_review": "08_code_review.md",
+    "verification": "09_verification.md",
+    "archive": "10_archive.md",
+    "agent_scenario": "agent/scenario.json",
+    "agent_profile": "agent/profile.json",
+    "agent_work_items_seed": "agent/work_items.seed.json",
+    "agent_work_items": "agent/work_items.json",
+    "agent_main_log": "agent/main-log.md",
+    "agent_lessons": "agent/lessons-learned.md",
+    "agent_compliance": "agent/compliance-report.md",
+    "agent_evolution": "agent/evolution-report.md"
+  },
+  "decisions": [],
+  "loops": []
+}

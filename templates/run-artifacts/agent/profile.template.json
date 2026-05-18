@@ -1,0 +1,17 @@
+{
+  "status": "missing",
+  "profile": "standard-delivery",
+  "severity": "balanced",
+  "source": "default",
+  "enabled_rulesets": [
+    "minimal-surgical",
+    "standard-delivery"
+  ],
+  "override_reason": "",
+  "applies_to": {
+    "scenario": "",
+    "work_items": []
+  },
+  "conflicts": [],
+  "must_read": []
+}

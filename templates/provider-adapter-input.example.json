@@ -1,0 +1,15 @@
+{
+  "action": "deploy",
+  "project_dir": "/path/to/project",
+  "environment": "staging",
+  "change": {
+    "branch": "feature/example",
+    "commit": "abc123",
+    "files": [
+      "src/example.ts"
+    ]
+  },
+  "context": {
+    "base_url": "https://preview.example.com"
+  }
+}

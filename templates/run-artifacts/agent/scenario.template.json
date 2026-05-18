@@ -1,0 +1,17 @@
+{
+  "status": "missing",
+  "primary": {
+    "id": "",
+    "name": "",
+    "confidence": 0,
+    "reason": ""
+  },
+  "alternatives": [],
+  "signals": {
+    "keywords": [],
+    "project_context": [],
+    "history": []
+  },
+  "risk_scenarios": [],
+  "blockers": []
+}

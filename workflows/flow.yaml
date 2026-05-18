@@ -1,0 +1,53 @@
+name: flow
+description: "快速工作流：分析 → 实现 → 验证"
+version: "1.0"
+
+config:
+  run_dir_pattern: ".dev-workflow/runs/{run_id}/"
+  state_file: "state.json"
+  memory_file: "memory.md"
+
+stages:
+  - id: 0
+    name: "分析"
+    type: analysis
+    prompt: |
+      分析需求，提取关键信息：目标、约束、验收标准。
+      确定需要修改的文件和模块。
+    tools:
+      - read_file
+      - bash
+      - grep
+    output:
+      - analysis.md
+    checkpoint:
+      condition: "需求理解存在歧义"
+      action: stop_and_ask
+
+  - id: 1
+    name: "实现"
+    type: implementation
+    prompt: |
+      根据分析结果进行实现，产出代码或配置变更。
+      每个变更对应一个明确的需求点。
+    tools:
+      - read_file
+      - write_file
+      - edit_file
+      - bash
+    output:
+      - implementation.md
+    checkpoint: true
+
+  - id: 2
+    name: "验证"
+    type: verification
+    prompt: |
+      验证执行结果是否满足验收标准。
+      运行测试、检查代码质量、确认功能正确。
+      输出通过/不通过及原因。
+    tools:
+      - read_file
+      - bash
+    output:
+      - verification.md

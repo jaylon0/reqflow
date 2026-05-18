@@ -1,0 +1,13 @@
+{
+  "project_root": "/path/to/java/project",
+  "chunk_level": "method",
+  "include": ["class_summary", "method_body", "annotations", "javadocs"],
+  "query": {
+    "text": "新增物料优先级筛选并展示归因方案字段",
+    "top_k": 20,
+    "filters": {
+      "modules": [],
+      "layers": ["controller", "service", "dao", "vo"]
+    }
+  }
+}

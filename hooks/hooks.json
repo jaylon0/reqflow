@@ -1,0 +1,96 @@
+{
+  "hooks": {
+    "spec-governance": {
+      "description": "Spec governance checks for durable behavior changes",
+      "skill": "spec-governance"
+    },
+    "spec-delta": {
+      "description": "Generate spec delta for requirement changes",
+      "skill": "spec-delta"
+    },
+    "constitution-check": {
+      "description": "Verify changes against project constitution",
+      "skill": "constitution-check"
+    },
+    "workflow-intelligence": {
+      "description": "Scenario detection and work item decomposition",
+      "skill": "workflow-intelligence"
+    },
+    "dynamic-checklist": {
+      "description": "Generate per-item checklists",
+      "skill": "dynamic-checklist"
+    },
+    "compliance-report": {
+      "description": "Generate compliance report",
+      "skill": "compliance-report"
+    },
+    "evolution-proposal": {
+      "description": "Generate evolution proposals",
+      "skill": "evolution-proposal"
+    },
+    "java-context-engine": {
+      "description": "Java code graph and semantic analysis",
+      "skill": "java-context-engine"
+    },
+    "java-code-graph": {
+      "description": "Build Java code dependency graph",
+      "skill": "java-context-engine"
+    },
+    "java-semantic-index": {
+      "description": "Build Java semantic index",
+      "skill": "java-context-engine"
+    },
+    "java-impact-analysis": {
+      "description": "Analyze impact of changes",
+      "skill": "java-context-engine"
+    },
+    "context-pack-builder": {
+      "description": "Generate per-item context packs",
+      "skill": "context-pack-builder"
+    },
+    "infra-components": {
+      "description": "Infrastructure component catalog",
+      "skill": "infra-components"
+    },
+    "domain-components": {
+      "description": "Domain component catalog",
+      "skill": "domain-components"
+    },
+    "support-infra-catalog": {
+      "description": "Infrastructure support catalog",
+      "skill": "support-infra-catalog"
+    },
+    "support-domain-rules": {
+      "description": "Domain support rules",
+      "skill": "support-domain-rules"
+    },
+    "java-agent-coordinator": {
+      "description": "Java-specific agent coordination",
+      "skill": "java-agent-coordinator"
+    },
+    "agent-coordinator": {
+      "description": "Supervised agent execution coordinator",
+      "skill": "agent-coordinator"
+    },
+    "quality-gates": {
+      "description": "Quality gate checks before module coding",
+      "skill": "quality-gates"
+    },
+    "tdd-gate": {
+      "description": "TDD compliance gate",
+      "skill": "tdd-gate"
+    },
+    "coding-standards": {
+      "description": "Coding standards compliance",
+      "skill": "coding-standards"
+    },
+    "completion-gate": {
+      "description": "Final completion gate",
+      "skill": "completion-gate"
+    },
+    "spec-archive": {
+      "description": "Archive specs after verification",
+      "skill": "spec-archive"
+    }
+  }
+}

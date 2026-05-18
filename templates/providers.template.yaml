@@ -1,0 +1,64 @@
+# Requirement Flow V2 provider configuration.
+# Store secrets in environment variables or keychains, not here.
+
+providers:
+  git_push:
+    adapter: "templates/adapters/git_host/github.py"
+    params:
+      repo: "owner/repo"
+      token_env: "GITHUB_TOKEN"
+    enabled: true
+
+  pull_request:
+    adapter: "templates/adapters/git_host/github.py"
+    params:
+      repo: "owner/repo"
+      token_env: "GITHUB_TOKEN"
+    enabled: true
+
+  release:
+    adapter: "templates/adapters/release/generic.py"
+    params: {}
+    enabled: false
+
+  deploy:
+    adapter: "templates/adapters/deploy/generic.py"
+    params:
+      target: "staging"
+    enabled: false
+
+  package_publish:
+    adapter: "templates/adapters/package_publish/generic.py"
+    params:
+      registry: "npm"
+    enabled: false
+
+  container_publish:
+    adapter: "templates/adapters/container_publish/generic.py"
+    params: {}
+    enabled: false
+
+  log_query:
+    adapter: "templates/adapters/log_query/generic.py"
+    params: {}
+    enabled: false
+
+  database_query:
+    adapter: "templates/adapters/database_query/generic.py"
+    params: {}
+    enabled: false
+
+  message_trigger:
+    adapter: "templates/adapters/message_trigger/generic.py"
+    params: {}
+    enabled: false
+
+  rpc_invoke:
+    adapter: "templates/adapters/rpc_invoke/generic.py"
+    params: {}
+    enabled: false
+
+  auth_check:
+    adapter: "templates/adapters/auth/generic.py"
+    params: {}
+    enabled: false

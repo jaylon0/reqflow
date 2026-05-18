@@ -1,0 +1,20 @@
+{
+  "project_root": "/path/to/java/project",
+  "build_tool": "maven",
+  "source_roots": ["src/main/java"],
+  "class_roots": ["target/classes"],
+  "dependency_classpath": [],
+  "entrypoints": [
+    {
+      "type": "http",
+      "pattern": "/rest/example/list",
+      "hint": "Controller method if known"
+    }
+  ],
+  "query": {
+    "intent": "impact_analysis",
+    "targets": ["Controller.list"],
+    "depth": 4,
+    "include": ["calls", "field_refs", "inheritance", "annotations", "sql"]
+  }
+}

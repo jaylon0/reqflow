@@ -1,0 +1,28 @@
+name: deepseek
+display_name: "DeepSeek"
+api_base: "https://api.deepseek.com/v1"
+model: "deepseek-chat"
+env_key: "DEEPSEEK_API_KEY"
+
+capabilities:
+  supports_agent_tools: false
+  supports_bash: false
+  supports_file_edit: false
+  supports_image: false
+  max_context_tokens: 64000
+
+tool_mapping:
+  read_file: "functions.read_file"
+  edit_file: "functions.edit_file"
+  bash: "functions.run_command"
+  agent: null
+
+context_format:
+  system_prompt_template: "templates/system-prompt-deepseek.md"
+  skill_format: "markdown"
+  artifact_format: "markdown"
+
+paths:
+  run_dir: ".dev-workflow/runs/"
+  state_file: "state.json"
+  log_file: "execution.log"

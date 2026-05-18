@@ -1,0 +1,15 @@
+{
+  "status": "success",
+  "entrypoint_confidence": "high",
+  "candidate_change_scope": {
+    "modules": [],
+    "files": [],
+    "symbols": []
+  },
+  "required_followups": [
+    "Confirm whether count queries mirror list query filters",
+    "Confirm DTO and VO ownership before adding response fields"
+  ],
+  "risk_signals": [],
+  "evidence_refs": []
+}

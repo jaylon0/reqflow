@@ -1,0 +1,14 @@
+{
+  "status": "success",
+  "index_version": "semantic-index-v1",
+  "matches": [
+    {
+      "file": "ExampleController.java",
+      "symbol": "list",
+      "score": 0.87,
+      "reason": "route and request parameter match",
+      "snippet_ref": "artifact://example"
+    }
+  ],
+  "missing_context": []
+}

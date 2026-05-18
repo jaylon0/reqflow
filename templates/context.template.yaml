@@ -1,0 +1,100 @@
+# Requirement Flow project context template.
+# Copy relevant fields into .dev-workflow/context.yaml or let context-bootstrap generate them.
+
+project:
+  name: ""
+  type: "backend-service" # backend-service | frontend-app | fullstack-app | library | other
+  languages: []
+  frameworks: []
+  package_manager: ""
+  source_roots: []
+  test_roots: []
+
+commands:
+  build: []
+  test: []
+  lint: []
+  typecheck: []
+
+workflow:
+  default_level: "auto"
+  max_retries: 3
+  run_root: ".dev-workflow/runs"
+  main_flow_enabled: true
+  loop_engine_enabled: true
+  spec_governance:
+    enabled: true
+    constitution_path: ".dev-workflow/constitution.md"
+    specs_root: ".dev-workflow/specs"
+    changes_root: ".dev-workflow/changes"
+  java_context_engine:
+    enabled: true
+    graph_provider: "manual"
+    semantic_provider: "manual"
+    graph_artifact_root: "graph"
+    rag_artifact_root: "rag"
+  quality_gates:
+    design_gate: true
+    tdd_gate: true
+    completion_gate: true
+  require_plan_for:
+    - api_change
+    - database_change
+    - message_change
+    - service_contract_change
+    - external_write
+  gap_checks:
+    - traffic_or_capacity
+    - idempotency
+    - rollout_or_feature_flag
+    - stability
+    - frontend_backend_api_ownership
+  knowledge_hooks:
+    step_02:
+      - spec-governance
+      - spec-delta
+      - constitution-check
+    step_03:
+      - workflow-intelligence
+      - dynamic-checklist
+      - compliance-report
+      - evolution-proposal
+    step_04:
+      - java-context-engine
+      - java-code-graph
+      - java-semantic-index
+      - java-impact-analysis
+      - context-pack-builder
+    step_05:
+      - infra-components
+      - domain-components
+      - support-infra-catalog
+      - support-domain-rules
+    step_06:
+      - java-agent-coordinator
+      - context-pack-builder
+      - dynamic-checklist
+    step_07:
+      - java-agent-coordinator
+      - agent-coordinator
+      - context-pack-builder
+      - dynamic-checklist
+    step_08_before_edit:
+      - quality-gates
+      - tdd-gate
+    step_08_after_edit:
+      - coding-standards
+    step_09:
+      - compliance-report
+      - completion-gate
+    step_10:
+      - spec-archive
+      - evolution-proposal
+
+standards:
+  enabled: true
+  references: []
+
+domain_catalog:
+  enabled: false
+  references: []

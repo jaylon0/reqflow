@@ -1,0 +1,28 @@
+name: gpt
+display_name: "GPT-4o"
+api_base: "https://api.openai.com/v1"
+model: "gpt-4o"
+env_key: "OPENAI_API_KEY"
+
+capabilities:
+  supports_agent_tools: false
+  supports_bash: false
+  supports_file_edit: false
+  supports_image: true
+  max_context_tokens: 128000
+
+tool_mapping:
+  read_file: "functions.read_file"
+  edit_file: "functions.edit_file"
+  bash: "functions.run_command"
+  agent: null
+
+context_format:
+  system_prompt_template: "templates/system-prompt-gpt.md"
+  skill_format: "json"
+  artifact_format: "json"
+
+paths:
+  run_dir: ".dev-workflow/runs/"
+  state_file: "state.json"
+  log_file: "execution.log"

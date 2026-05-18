@@ -1,0 +1,55 @@
+{
+  "name": "reqflow",
+  "version": "2.0.0",
+  "description": "ReqFlow 工作流编排引擎 MCP Server",
+  "transport": "stdio",
+  "command": "python3",
+  "args": ["-m", "reqflow.runner.mcp_server"],
+  "env": {},
+  "tools": [
+    {
+      "name": "reqflow_run",
+      "description": "执行线性工作流（分析 → 实现 → 验证）"
+    },
+    {
+      "name": "reqflow_run_graph",
+      "description": "执行图编排工作流（支持分支、并行、human gate）"
+    },
+    {
+      "name": "reqflow_session_save",
+      "description": "保存会话上下文（跨轮次持久化）"
+    },
+    {
+      "name": "reqflow_session_load",
+      "description": "加载会话上下文"
+    },
+    {
+      "name": "reqflow_status",
+      "description": "查询运行状态"
+    },
+    {
+      "name": "reqflow_list_runtimes",
+      "description": "列出可用 runtime"
+    },
+    {
+      "name": "reqflow_dashboard",
+      "description": "获取格式化运行面板"
+    },
+    {
+      "name": "reqflow_checkpoint",
+      "description": "Checkpoint 管理（create/restore/list）"
+    },
+    {
+      "name": "reqflow_parallel",
+      "description": "并行 agent 调度"
+    },
+    {
+      "name": "reqflow_trace",
+      "description": "执行追踪（summary/export）"
+    },
+    {
+      "name": "reqflow_guardrails",
+      "description": "约束检查"
+    }
+  ]
+}

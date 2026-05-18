@@ -1,0 +1,12 @@
+{
+  "status": "success",
+  "graph_version": "java-graph-v1",
+  "entrypoints": [],
+  "call_chains": [],
+  "affected_nodes": [],
+  "risk_signals": [
+    "list query and count query may need synchronized filtering",
+    "VO mapping crosses helper layer"
+  ],
+  "evidence": []
+}

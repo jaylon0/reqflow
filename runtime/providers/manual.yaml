@@ -1,0 +1,25 @@
+name: manual
+display_name: "Manual Mode"
+
+capabilities:
+  supports_agent_tools: false
+  supports_bash: false
+  supports_file_edit: false
+  supports_image: false
+  max_context_tokens: 0
+
+tool_mapping:
+  read_file: "manual"
+  edit_file: "manual"
+  bash: "manual"
+  agent: null
+
+context_format:
+  system_prompt_template: "templates/system-prompt-manual.md"
+  skill_format: "markdown"
+  artifact_format: "markdown"
+
+paths:
+  run_dir: ".dev-workflow/runs/"
+  state_file: "state.json"
+  log_file: "execution.log"

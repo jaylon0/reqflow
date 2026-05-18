@@ -1,0 +1,44 @@
+{
+  "status": "draft",
+  "source_artifacts": [
+    "01_prd_summary.md",
+    "02_spec_delta.md",
+    "03_context_discovery.md",
+    "05_impl_plan.md"
+  ],
+  "rules": {
+    "story_size": "one work item must fit in one agent context and be independently verifiable",
+    "write_concurrency": "serial",
+    "read_only_parallelism": "allowed_later",
+    "max_repair_rounds": 3
+  },
+  "items": [
+    {
+      "id": "wi-001",
+      "module": "example-module",
+      "scenario": "java-api-change",
+      "status": "pending",
+      "priority": 1,
+      "authorized_scope": {
+        "modules": [],
+        "files": []
+      },
+      "context_pack": "agent/context-packs/wi-001.md",
+      "checklist": "agent/checklists/wi-001.json",
+      "acceptance_criteria": [],
+      "agent_ids": {
+        "dev": "",
+        "verify": "",
+        "review": ""
+      },
+      "reports": {
+        "dev": "agent/reports/wi-001/dev-report.md",
+        "verify": "agent/reports/wi-001/verify-report.md",
+        "review": "agent/reports/wi-001/review-report.md"
+      },
+      "attempts": 0,
+      "blockers": [],
+      "evidence": []
+    }
+  ]
+}

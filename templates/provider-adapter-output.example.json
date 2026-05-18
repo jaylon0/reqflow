@@ -1,0 +1,8 @@
+{
+  "status": "success",
+  "artifacts": {
+    "deploy_url": "https://preview.example.com",
+    "run_url": "https://ci.example.com/runs/123"
+  },
+  "summary": "Deployment completed"
+}

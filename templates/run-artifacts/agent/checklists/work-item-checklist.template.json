@@ -1,0 +1,26 @@
+{
+  "status": "draft",
+  "work_item_id": "wi-001",
+  "scenario": "",
+  "profile": "standard-delivery",
+  "severity": "balanced",
+  "metadata": {
+    "generated_at": "",
+    "sources": []
+  },
+  "checklist": {
+    "mandatory": [],
+    "important": [],
+    "nice_to_have": [],
+    "info": []
+  },
+  "coverage": {
+    "total_items": 0,
+    "from_scenario": 0,
+    "from_profile": 0,
+    "from_custom_acceptance": 0,
+    "from_project_rules": 0
+  },
+  "warnings": [],
+  "blockers": []
+}

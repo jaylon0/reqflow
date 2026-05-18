@@ -1,0 +1,377 @@
+name: main-flow
+description: "完整 PRD-to-code 工作流，10 阶段管线"
+version: "1.0"
+
+# 全局配置
+config:
+  run_dir_pattern: ".dev-workflow/runs/{run_id}/"
+  state_file: "state.json"
+  memory_file: "memory.md"
+  max_repair_rounds: 3
+
+# 阶段定义
+stages:
+  # ─────────────────────────────────────────────
+  # Stage 0: 启动或恢复运行
+  # ─────────────────────────────────────────────
+  - id: 0
+    name: "启动或恢复运行"
+    type: setup
+    prompt: |
+      生成 run-id，创建 .dev-workflow/runs/<run-id>/ 目录，初始化 state.json。
+      如果是恢复运行，读取已有 state.json 确定断点。
+    tools:
+      - bash
+      - read_file
+      - write_file
+    output:
+      - state.json
+      - memory.md
+
+  # ─────────────────────────────────────────────
+  # Stage 1: PRD 理解
+  # ─────────────────────────────────────────────
+  - id: 1
+    name: "PRD 理解"
+    type: analysis
+    prompt: |
+      解析需求，提取功能点、非功能需求、约束条件。
+      识别利益相关者和验收标准。
+      标记不明确的地方为 BLOCKER。
+    tools:
+      - read_file
+      - write_file
+      - bash
+      - grep
+    output:
+      - 01_prd_summary.md
+    checkpoint:
+      condition: "PRD 摘要包含未解决问题"
+      action: stop_and_ask
+    knowledge_hooks: []
+
+  # ─────────────────────────────────────────────
+  # Stage 2: Spec Governance
+  # ─────────────────────────────────────────────
+  - id: 2
+    name: "Spec Governance"
+    type: governance
+    prompt: |
+      运行 spec-governance 和 spec-delta skill，运行 constitution-check 检查合规性，
+      将需求映射到 spec 变更。对持久行为变更需要用户审批。
+    tools:
+      - read_file
+      - write_file
+      - bash
+      - grep
+    output:
+      - 02_spec_delta.md
+    checkpoint:
+      condition: "spec delta 变更持久行为"
+      action: stop_and_ask
+    knowledge_hooks:
+      - spec-governance
+      - spec-delta
+      - constitution-check
+    gate_calls:
+      - name: constitution-check
+        timing: before
+        severity: fatal
+
+  # ─────────────────────────────────────────────
+  # Stage 3: Workflow Intelligence
+  # ─────────────────────────────────────────────
+  - id: 3
+    name: "Workflow Intelligence"
+    type: intelligence
+    prompt: |
+      运行 workflow_intelligence_runner.py 生成基础产物，
+      审查场景检测（置信度 < 0.7 时请用户确认），
+      审查工作项分解和清单，
+      生成 compliance 和 evolution 产物。
+    tools:
+      - read_file
+      - write_file
+      - bash
+      - agent
+    output:
+      - 03_workflow_intelligence.md
+      - agent/scenario.json
+      - agent/profile.json
+      - agent/work_items.seed.json
+      - agent/checklists/
+    checkpoint:
+      condition: "场景检测或画像选择有歧义"
+      action: stop_and_ask
+    knowledge_hooks:
+      - workflow-intelligence
+      - dynamic-checklist
+      - compliance-report
+      - evolution-proposal
+    scripts:
+      - workflow_intelligence_runner.py
+
+  # ─────────────────────────────────────────────
+  # Stage 4: Java Context Discovery
+  # ─────────────────────────────────────────────
+  - id: 4
+    name: "Java Context Discovery"
+    type: context
+    prompt: |
+      运行 java-context-engine、java-code-graph、java-semantic-index，
+      运行 java-impact-analysis 分析变更影响，
+      运行 context-pack-builder 构建上下文包。
+      技术差距检查：流量/容量、幂等性、发布策略、稳定性、前后端边界。
+    tools:
+      - read_file
+      - write_file
+      - bash
+      - grep
+      - agent
+    output:
+      - 04_context_discovery.md
+      - graph/
+      - rag/
+      - agent/context-packs/
+    knowledge_hooks:
+      - java-context-engine
+      - java-code-graph
+      - java-semantic-index
+      - java-impact-analysis
+      - context-pack-builder
+    scripts:
+      - java_context_engine.py
+    technical_gap_check:
+      - traffic_capacity
+      - idempotency
+      - rollout_strategy
+      - stability
+      - frontend_backend_boundary
+
+  # ─────────────────────────────────────────────
+  # Stage 5: Technical Plan
+  # ─────────────────────────────────────────────
+  - id: 5
+    name: "Technical Plan"
+    type: planning
+    prompt: |
+      运行 infra-components 和 domain-components skill，
+      运行 support-infra-catalog 和 support-domain-rules，
+      制定技术方案：架构选型、接口设计、数据模型、组件选择。
+      追加技术差距检查结论。
+    tools:
+      - read_file
+      - write_file
+      - bash
+      - grep
+    output:
+      - 05_tech_plan.md
+    checkpoint:
+      condition: "技术方案选择架构、接口、数据、provider 或组件行为"
+      action: stop_and_ask
+    knowledge_hooks:
+      - infra-components
+      - domain-components
+      - support-infra-catalog
+      - support-domain-rules
+
+  # ─────────────────────────────────────────────
+  # Stage 6: Implementation Plan
+  # ─────────────────────────────────────────────
+  - id: 6
+    name: "Implementation Plan"
+    type: planning
+    prompt: |
+      将技术方案拆分为模块级实现计划，确定模块顺序和依赖关系，
+      生成 planned_modules 列表写入 state.json，
+      运行 context-pack-builder 为每个模块构建上下文包，
+      运行 dynamic-checklist 生成检查清单。
+    tools:
+      - read_file
+      - write_file
+      - bash
+      - agent
+    output:
+      - 06_impl_plan.md
+      - agent/work_items.seed.json
+    checkpoint:
+      condition: "实现计划确认后继续"
+      action: stop_and_ask
+    knowledge_hooks:
+      - java-agent-coordinator
+      - context-pack-builder
+      - dynamic-checklist
+
+  # ─────────────────────────────────────────────
+  # Stage 7: Agent Execution
+  # ─────────────────────────────────────────────
+  - id: 7
+    name: "Agent Execution"
+    type: execution
+    prompt: |
+      运行 agent_execution_runner.py 验证 work_items.seed.json -> work_items.json。
+      加载 agent-coordinator skill。
+      对每个 status=pending 的工作项：
+        调度 dev 智能体 -> 成功后并行调度 verify + review 智能体 -> 评估结果
+        -> 失败则进入修复循环（最多 3 轮）。
+      所有工作项处理完毕后运行 agent_execution_runner.py 验证最终状态。
+    tools:
+      - read_file
+      - write_file
+      - bash
+      - agent
+    output:
+      - 07_agent_execution.md
+      - agent/work_items.json
+      - agent/reports/
+    knowledge_hooks:
+      - java-agent-coordinator
+      - agent-coordinator
+      - context-pack-builder
+      - dynamic-checklist
+    scripts:
+      - agent_execution_runner.py
+    agent_coordination:
+      mode: supervised_agents
+      dispatch:
+        - type: dev
+          model_selection:
+            opus: "database schema changes, multi-service coordination, security-sensitive code, >5 acceptance criteria"
+            sonnet: "standard API changes, simple service logic, test additions, <=5 acceptance criteria"
+        - type: verify
+          parallel_with: review
+        - type: review
+          parallel_with: verify
+      repair:
+        max_rounds: 3
+        strategy: resume_dev_agent
+      output_contracts:
+        dev: |
+          DEV_STATUS: success|failed
+          FILES_CHANGED:
+          SUMMARY:
+          BLOCKERS:
+        verify: |
+          VERIFY_STATUS: pass|fail
+          BUILD_RESULT: pass|fail
+          TEST_RESULT: pass|fail
+          FAILURES:
+        review: |
+          REVIEW_STATUS: pass|fail
+          SPEC_COMPLIANCE: pass|fail
+          CODE_QUALITY: pass|fail
+          FINDINGS:
+
+  # ─────────────────────────────────────────────
+  # Stage 8: Code Review
+  # ─────────────────────────────────────────────
+  - id: 8
+    name: "Code Review"
+    type: review
+    prompt: |
+      汇总智能体审查结果，运行 quality-gates 和 tdd-gate，
+      运行 coding-standards 检查，
+      按需求匹配度和编码规范两个维度审查。
+    tools:
+      - read_file
+      - write_file
+      - bash
+      - grep
+    output:
+      - 08_code_review.md
+    knowledge_hooks:
+      - quality-gates
+      - tdd-gate
+      - coding-standards
+    gate_calls:
+      - name: quality-gates
+        timing: before_review
+        checks:
+          - design-gate
+          - pre-coding-checks
+          - tdd-gate
+      - name: coding-standards
+        timing: during_review
+
+  # ─────────────────────────────────────────────
+  # Stage 9: Delivery Verification
+  # ─────────────────────────────────────────────
+  - id: 9
+    name: "Delivery Verification"
+    type: verification
+    prompt: |
+      运行验证 skill（API、UI、消息、RPC 等），
+      运行 compliance-report，
+      运行 completion-gate 最终门控。
+      验证失败时进入 loop-engine 修复循环。
+    tools:
+      - read_file
+      - write_file
+      - bash
+      - agent
+    output:
+      - 09_verification.md
+    knowledge_hooks:
+      - verify-api
+      - verify-ui
+      - verify-message
+      - verify-rpc
+      - compliance-report
+      - completion-gate
+    gate_calls:
+      - name: completion-gate
+        timing: before_archive
+        severity: fatal
+    loop_on_failure:
+      engine: loop-engine
+      max_iterations: 3
+
+  # ─────────────────────────────────────────────
+  # Stage 10: Archive and Evolution
+  # ─────────────────────────────────────────────
+  - id: 10
+    name: "Archive and Evolution"
+    type: archive
+    prompt: |
+      运行 spec-archive 归档 spec 变更，
+      运行 evolution-proposal 生成演进建议，
+      更新项目文档和知识库，
+      生成运行总结。
+    tools:
+      - read_file
+      - write_file
+      - bash
+    output:
+      - 10_archive.md
+    checkpoint:
+      condition: "归档应用 spec 变更到项目持久 spec 前停止确认。Evolution proposal 涉及 memory/skill/template/配置变更时不要自动应用。"
+      action: stop_and_ask
+    knowledge_hooks:
+      - spec-archive
+      - evolution-proposal
+
+# Loop Engine 状态机定义
+loop_engine:
+  state_machine: "observe -> classify -> localize -> patch -> verify -> review -> decide"
+  trigger_types:
+    - blocker
+    - build_failed
+    - verify_failed
+    - review_finding
+    - manual_feedback
+  failure_classifications:
+    - code_issue
+    - test_issue
+    - environment_issue
+    - requirement_unclear
+    - external_dependency
+    - provider_missing
+    - auth_missing
+    - data_missing
+  risk_gates:
+    - "same fingerprint appears twice"
+    - "max retry count reached"
+    - "fix requires files outside authorized module"
+    - "requirement or expected behavior is unclear"
+    - "external auth, provider, data, or environment unavailable"
+    - "review finding requires product/API/architecture/data-shape decision"

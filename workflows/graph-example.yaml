@@ -1,0 +1,43 @@
+name: "graph-example"
+description: "Example graph workflow with branching"
+
+graph:
+  entry: "analyze"
+  nodes:
+    - id: "analyze"
+      type: "agent"
+      prompt: "分析需求，输出置信度分数"
+
+    - id: "gate"
+      type: "decision"
+      edges:
+        - target: "implement"
+          when: "true"
+        - target: "clarify"
+          when: "false"
+
+    - id: "clarify"
+      type: "human_gate"
+      prompt: "置信度不足，请确认需求"
+
+    - id: "implement"
+      type: "agent"
+      prompt: "实现需求代码"
+
+    - id: "verify"
+      type: "agent"
+      prompt: "验证实现"
+
+  edges:
+    - source: "analyze"
+      target: "gate"
+    - source: "gate"
+      target: "implement"
+      condition: "confidence >= 0.7"
+    - source: "gate"
+      target: "clarify"
+      condition: "confidence < 0.7"
+    - source: "clarify"
+      target: "implement"
+    - source: "implement"
+      target: "verify"

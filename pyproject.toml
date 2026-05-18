@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "reqflow"
+version = "0.1.0"
+description = "Model-agnostic workflow orchestration engine for AI coding agents"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+api = ["urllib3>=2.0"]
+mcp = ["mcp>=1.0"]
+all = ["urllib3>=2.0", "mcp>=1.0"]
+
+[project.scripts]
+reqflow = "reqflow.runner.cli:main"
