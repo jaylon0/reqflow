@@ -156,6 +156,12 @@ class Engine:
                     "status": step_result.status,
                     "content": step_result.response.content if step_result.response else "",
                 })
+                self.state_manager.state.stage_records.append({
+                    "name": step["name"],
+                    "status": step_result.status,
+                    "duration_ms": step_result.duration_ms,
+                    "error": step_result.error,
+                })
                 final_result["steps"].append({
                     "name": step["name"],
                     "status": step_result.status,

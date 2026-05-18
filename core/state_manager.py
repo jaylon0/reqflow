@@ -77,6 +77,7 @@ class RunState:
     checkpoints: list[Checkpoint] = field(default_factory=list)
     lessons_learned: list[str] = field(default_factory=list)
     agent_execution_log: list[dict[str, Any]] = field(default_factory=list)
+    stage_records: list[dict[str, Any]] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
