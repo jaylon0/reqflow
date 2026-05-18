@@ -258,6 +258,240 @@ class Engine:
         finally:
             self._current_loop_engine = None
 
+    async def run_dag_workflow(
+        self, workflow_name: str, requirement: str
+    ) -> dict[str, Any]:
+        """Execute a workflow as a DAG with parallel stage support.
+
+        Loads the workflow definition, generates agent files, builds a DAG
+        from depends_on/parallel_group fields, and executes via GraphEngine.
+
+        Args:
+            workflow_name: Name of the workflow YAML file (without extension).
+            requirement: The requirement text driving this workflow.
+
+        Returns:
+            Workflow execution result dict with status, steps, failed_at, etc.
+        """
+        from .agent_registry import AgentRegistry
+
+        definition = self.workflow_loader.load(workflow_name)
+
+        # Generate agent files if agent_templates defined
+        agent_registry = AgentRegistry(
+            agents_dir=str(Path(self.run_dir) / ".claude" / "agents")
+        )
+        agent_registry.load_from_workflow(definition)
+        if agent_registry.list_agents():
+            agent_registry.generate_files()
+
+        # Build DAG from stages
+        graph = self.workflow_loader.load_graph(workflow_name)
+
+        # Merge gate constraints into graph node configs
+        yaml_stages = definition.get("stages", [])
+        for yaml_stage in yaml_stages:
+            stage_name = yaml_stage.get("name", "")
+            if stage_name in graph.nodes:
+                gate_constraints = self.workflow_loader.get_stage_gates(yaml_stage)
+                if gate_constraints:
+                    existing = graph.nodes[stage_name].config.get("constraints", [])
+                    graph.nodes[stage_name].config["constraints"] = existing + gate_constraints
+
+        # Store loop_engine config
+        self._current_loop_engine = definition.get("loop_engine")
+
+        self.state_manager.update_stage("dag_workflow_start")
+        self.state_manager.save_state()
+
+        workflow_span = self.tracer.start_span(
+            "dag_workflow",
+            input_data={"requirement": requirement, "nodes": len(graph.nodes)},
+        )
+
+        final_result: dict[str, Any] = {"steps": [], "status": "completed"}
+
+        try:
+            # Create a mutable state shared across all node handlers
+            dag_state: dict[str, Any] = {
+                "requirement": requirement,
+                "completed_steps": [],
+                "failed": False,
+            }
+
+            # Wrap graph: replace node configs with actual handlers
+            wrapped_graph = self._wrap_graph_for_dag(graph, dag_state, final_result)
+
+            from .graph import GraphEngine
+            graph_engine = GraphEngine(wrapped_graph, state=dag_state)
+            result_state = await graph_engine.run()
+
+            if result_state.get("failed"):
+                if final_result["status"] not in ("failed", "aborted"):
+                    final_result["status"] = "failed"
+
+            if final_result["status"] not in ("failed", "aborted", "error"):
+                final_result["status"] = "completed"
+
+        except Exception as e:
+            final_result["status"] = "error"
+            final_result["error"] = str(e)
+        finally:
+            self.tracer.end_span(
+                workflow_span.span_id,
+                output=final_result["status"],
+                status="success" if final_result["status"] == "completed" else "failure",
+            )
+            self.tracer.export()
+            self._current_loop_engine = None
+
+        self.state_manager.state.agent_execution_log.append({
+            "workflow": "run_dag_workflow",
+            "requirement": requirement,
+            "result": final_result["status"],
+            "timestamp": datetime.now().isoformat(),
+        })
+        self.state_manager.save_state()
+
+        return final_result
+
+    def _wrap_graph_for_dag(
+        self,
+        graph: "Graph",
+        dag_state: dict[str, Any],
+        final_result: dict[str, Any],
+    ) -> "Graph":
+        """Create a wrapped graph where each node handler executes the stage."""
+        from .graph import Node, Edge, Graph
+
+        wrapped_nodes = {}
+        for node_id, node in graph.nodes.items():
+            async def make_handler(nid: str, node_config: dict):
+                async def handler(state: dict[str, Any]) -> dict[str, Any]:
+                    if state.get("failed"):
+                        return state
+                    step_result = await self.run_step(
+                        node_config, context={"requirement": state["requirement"]}
+                    )
+                    self._step_results[nid] = step_result
+                    state["completed_steps"].append({
+                        "name": nid,
+                        "status": step_result.status,
+                    })
+                    self.state_manager.state.stage_records.append({
+                        "name": nid,
+                        "status": step_result.status,
+                        "duration_ms": step_result.duration_ms,
+                        "error": step_result.error,
+                        "content": step_result.response.content[:2000] if step_result.response else "",
+                    })
+                    self.state_manager.state.agent_execution_log.append({
+                        "type": "step",
+                        "step_name": nid,
+                        "status": step_result.status,
+                        "duration_ms": step_result.duration_ms,
+                        "error": step_result.error,
+                        "content_preview": step_result.response.content[:500] if step_result.response else "",
+                        "timestamp": datetime.now().isoformat(),
+                    })
+                    final_result["steps"].append({
+                        "name": nid,
+                        "status": step_result.status,
+                    })
+                    if step_result.status == "failure":
+                        state["failed"] = True
+                        final_result["status"] = "failed"
+                        final_result["error"] = step_result.error
+                        final_result["failed_at"] = nid
+                    elif step_result.status == "aborted":
+                        state["failed"] = True
+                        final_result["status"] = "aborted"
+                        final_result["abort_reason"] = step_result.error
+                    else:
+                        self.state_manager.complete_module(nid)
+                    return state
+                return handler
+
+            # We need to create the coroutine function outside the loop
+            # Use a closure factory
+            wrapped_node = Node(
+                id=node.id,
+                type=node.type,
+                handler=None,  # will be set below
+                config=node.config,
+            )
+            wrapped_nodes[node.id] = wrapped_node
+
+        # Now set handlers (can't use async def in loop easily, use separate method)
+        for node_id, node in wrapped_nodes.items():
+            original_config = graph.nodes[node_id].config
+            node.handler = self._make_dag_node_handler(
+                node_id, original_config, dag_state, final_result
+            )
+
+        return Graph(
+            nodes=wrapped_nodes,
+            edges=graph.edges,
+            entry=graph.entry,
+            exit=graph.exit,
+        )
+
+    def _make_dag_node_handler(
+        self,
+        node_id: str,
+        node_config: dict[str, Any],
+        dag_state: dict[str, Any],
+        final_result: dict[str, Any],
+    ):
+        """Create an async handler for a DAG node."""
+        engine = self  # capture for closure
+
+        async def handler(state: dict[str, Any]) -> dict[str, Any]:
+            if state.get("failed"):
+                return state
+            step_result = await engine.run_step(
+                node_config, context={"requirement": state["requirement"]}
+            )
+            engine._step_results[node_id] = step_result
+            state["completed_steps"].append({
+                "name": node_id,
+                "status": step_result.status,
+            })
+            engine.state_manager.state.stage_records.append({
+                "name": node_id,
+                "status": step_result.status,
+                "duration_ms": step_result.duration_ms,
+                "error": step_result.error,
+                "content": step_result.response.content[:2000] if step_result.response else "",
+            })
+            engine.state_manager.state.agent_execution_log.append({
+                "type": "step",
+                "step_name": node_id,
+                "status": step_result.status,
+                "duration_ms": step_result.duration_ms,
+                "error": step_result.error,
+                "content_preview": step_result.response.content[:500] if step_result.response else "",
+                "timestamp": datetime.now().isoformat(),
+            })
+            final_result["steps"].append({
+                "name": node_id,
+                "status": step_result.status,
+            })
+            if step_result.status == "failure":
+                state["failed"] = True
+                final_result["status"] = "failed"
+                final_result["error"] = step_result.error
+                final_result["failed_at"] = node_id
+            elif step_result.status == "aborted":
+                state["failed"] = True
+                final_result["status"] = "aborted"
+                final_result["abort_reason"] = step_result.error
+            else:
+                engine.state_manager.complete_module(node_id)
+            return state
+
+        return handler
+
     async def run_graph(self, graph: "Graph") -> dict[str, Any]:
         """Execute a workflow graph.
 

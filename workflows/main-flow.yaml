@@ -9,6 +9,58 @@ config:
   memory_file: "memory.md"
   max_repair_rounds: 3
 
+# Agent 模板（生成 .claude/agents/*.md）
+agent_templates:
+  dev-agent:
+    description: "开发智能体，负责代码实现。当需要编写或修改代码时委派。"
+    model: sonnet
+    tools: [Read, Write, Edit, Bash, Glob, Grep]
+    permissionMode: acceptEdits
+    memory: project
+    prompt: |
+      You are a development agent. When invoked:
+      1. Read the context pack and work item specification
+      2. Implement the code changes following the spec
+      3. Run tests to verify your changes
+      4. Report: DEV_STATUS, FILES_CHANGED, SUMMARY, BLOCKERS
+
+  verify-agent:
+    description: "验证智能体，负责构建和测试验证。当需要验证代码正确性时委派。"
+    model: sonnet
+    tools: [Read, Bash, Glob, Grep]
+    permissionMode: auto
+    memory: project
+    prompt: |
+      You are a verification agent. When invoked:
+      1. Run the build to check compilation
+      2. Run the test suite
+      3. Report: VERIFY_STATUS, BUILD_RESULT, TEST_RESULT, FAILURES
+
+  review-agent:
+    description: "审查智能体，负责代码质量和规范合规性审查。当需要代码审查时委派。"
+    model: sonnet
+    tools: [Read, Glob, Grep]
+    permissionMode: plan
+    memory: project
+    prompt: |
+      You are a code review agent. When invoked:
+      1. Read the changed files
+      2. Check spec compliance and code quality
+      3. Output: [CRITICAL] [IMPORTANT] [SUGGESTION] [PRAISE]
+      4. Report: REVIEW_STATUS, SPEC_COMPLIANCE, CODE_QUALITY, FINDINGS
+
+  doc-agent:
+    description: "文档智能体，负责生成和更新文档。当需要补充文档时委派。"
+    model: haiku
+    tools: [Read, Write, Glob, Grep]
+    permissionMode: acceptEdits
+    memory: project
+    prompt: |
+      You are a documentation agent. When invoked:
+      1. Read the target code and existing docs
+      2. Generate or update documentation
+      3. Follow existing doc style in the project
+
 # 阶段定义
 stages:
   # ─────────────────────────────────────────────
@@ -34,6 +86,7 @@ stages:
   - id: 1
     name: "PRD 理解"
     type: analysis
+    depends_on: [0]
     prompt: |
       解析需求，提取功能点、非功能需求、约束条件。
       识别利益相关者和验收标准。
@@ -56,6 +109,7 @@ stages:
   - id: 2
     name: "Spec Governance"
     type: governance
+    depends_on: [1]
     prompt: |
       运行 spec-governance 和 spec-delta skill，运行 constitution-check 检查合规性，
       将需求映射到 spec 变更。对持久行为变更需要用户审批。
@@ -84,6 +138,7 @@ stages:
   - id: 3
     name: "Workflow Intelligence"
     type: intelligence
+    depends_on: [2]
     prompt: |
       运行 workflow_intelligence_runner.py 生成基础产物，
       审查场景检测（置信度 < 0.7 时请用户确认），
@@ -117,6 +172,8 @@ stages:
   - id: 4
     name: "Java Context Discovery"
     type: context
+    depends_on: [3]
+    parallel_group: "context-planning"
     prompt: |
       运行 java-context-engine、java-code-graph、java-semantic-index，
       运行 java-impact-analysis 分析变更影响，
@@ -154,6 +211,8 @@ stages:
   - id: 5
     name: "Technical Plan"
     type: planning
+    depends_on: [3]
+    parallel_group: "context-planning"
     prompt: |
       运行 infra-components 和 domain-components skill，
       运行 support-infra-catalog 和 support-domain-rules，
@@ -181,6 +240,7 @@ stages:
   - id: 6
     name: "Implementation Plan"
     type: planning
+    depends_on: [4, 5]
     prompt: |
       将技术方案拆分为模块级实现计划，确定模块顺序和依赖关系，
       生成 planned_modules 列表写入 state.json，
@@ -208,6 +268,8 @@ stages:
   - id: 7
     name: "Agent Execution"
     type: execution
+    depends_on: [6]
+    agent: dev-agent
     prompt: |
       运行 agent_execution_runner.py 验证 work_items.seed.json -> work_items.json。
       加载 agent-coordinator skill。
@@ -235,12 +297,15 @@ stages:
       mode: supervised_agents
       dispatch:
         - type: dev
+          agent: dev-agent
           model_selection:
             opus: "database schema changes, multi-service coordination, security-sensitive code, >5 acceptance criteria"
             sonnet: "standard API changes, simple service logic, test additions, <=5 acceptance criteria"
         - type: verify
+          agent: verify-agent
           parallel_with: review
         - type: review
+          agent: review-agent
           parallel_with: verify
       repair:
         max_rounds: 3
@@ -268,6 +333,7 @@ stages:
   - id: 8
     name: "Code Review"
     type: review
+    depends_on: [7]
     prompt: |
       汇总智能体审查结果，运行 quality-gates 和 tdd-gate，
       运行 coding-standards 检查，
@@ -299,6 +365,7 @@ stages:
   - id: 9
     name: "Delivery Verification"
     type: verification
+    depends_on: [8]
     prompt: |
       运行验证 skill（API、UI、消息、RPC 等），
       运行 compliance-report，
@@ -332,6 +399,7 @@ stages:
   - id: 10
     name: "Archive and Evolution"
     type: archive
+    depends_on: [9]
     prompt: |
       运行 spec-archive 归档 spec 变更，
       运行 evolution-proposal 生成演进建议，

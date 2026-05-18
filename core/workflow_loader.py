@@ -189,28 +189,71 @@ class WorkflowLoader:
         )
 
     def _stages_to_graph(self, stages: list[dict]) -> "Graph":
-        """Convert linear stages list to a Graph."""
+        """Convert stages list to a Graph.
+
+        Supports two modes:
+        1. Linear (legacy): stages without depends_on form a linear chain
+        2. DAG: stages with depends_on form a directed acyclic graph
+           - parallel_group label is preserved in node config for UI/scheduling
+        """
         from .graph import Node, Edge, Graph
 
         nodes: dict[str, Node] = {}
         edges: list[Edge] = []
+        id_to_name: dict[int, str] = {}  # stage id -> node name
 
-        for i, stage in enumerate(stages):
+        # First pass: create all nodes
+        for stage in stages:
             step = self._convert_stage(stage)
+            stage_id = stage.get("id")
             node = Node(
                 id=step["name"],
                 type="agent",
                 handler=step.get("handler", lambda s: s),
-                config=step,
+                config={**step, "stage_id": stage_id},
             )
             nodes[node.id] = node
+            if stage_id is not None:
+                id_to_name[stage_id] = step["name"]
 
-            if i > 0:
+        # Second pass: create edges
+        has_depends_on = any("depends_on" in s for s in stages)
+
+        if has_depends_on:
+            # DAG mode: edges from depends_on declarations
+            for stage in stages:
+                target_name = id_to_name.get(stage.get("id"), stage.get("name", ""))
+                depends_on = stage.get("depends_on", [])
+                if depends_on:
+                    for dep_id in depends_on:
+                        source_name = id_to_name.get(dep_id)
+                        if source_name and source_name in nodes:
+                            edges.append(Edge(source=source_name, target=target_name))
+                elif stages.index(stage) > 0:
+                    # No depends_on and not first: depend on previous stage
+                    prev = stages[stages.index(stage) - 1]
+                    prev_name = id_to_name.get(prev.get("id"), prev.get("name", ""))
+                    if prev_name in nodes:
+                        edges.append(Edge(source=prev_name, target=target_name))
+        else:
+            # Linear mode (legacy): each stage depends on previous
+            for i in range(1, len(stages)):
                 prev_name = self._convert_stage(stages[i - 1])["name"]
-                edges.append(Edge(source=prev_name, target=node.id))
+                curr_name = self._convert_stage(stages[i])["name"]
+                edges.append(Edge(source=prev_name, target=curr_name))
 
-        entry = self._convert_stage(stages[0])["name"] if stages else ""
-        exit_nodes = [self._convert_stage(stages[-1])["name"]] if stages else []
+        # Entry: node with no incoming edges, or first stage
+        incoming = {e.target for e in edges}
+        entry_candidates = [n for n in nodes if n not in incoming]
+        entry = entry_candidates[0] if entry_candidates else (
+            self._convert_stage(stages[0])["name"] if stages else ""
+        )
+
+        # Exit: node with no outgoing edges
+        outgoing = {e.source for e in edges}
+        exit_nodes = [n for n in nodes if n not in outgoing]
+        if not exit_nodes and stages:
+            exit_nodes = [self._convert_stage(stages[-1])["name"]]
 
         return Graph(nodes=nodes, edges=edges, entry=entry, exit=exit_nodes)
 
@@ -253,6 +296,16 @@ class WorkflowLoader:
         # loop configuration
         if "loop" in stage:
             step["loop"] = stage["loop"]
+
+        # DAG fields
+        if "depends_on" in stage:
+            step["depends_on"] = stage["depends_on"]
+        if "parallel_group" in stage:
+            step["parallel_group"] = stage["parallel_group"]
+        if "agent" in stage:
+            step["agent"] = stage["agent"]
+        if "agent_coordination" in stage:
+            step["agent_coordination"] = stage["agent_coordination"]
 
         return step
 
