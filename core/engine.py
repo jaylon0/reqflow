@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-import uuid
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -40,9 +40,11 @@ class Engine:
 
     def __init__(self, config: RuntimeConfig, run_dir: str | None = None, workflows_dir: str | None = None):
         self.config = config
-        self.run_dir = run_dir or os.path.join(
-            config.paths.run_dir, f"run-{uuid.uuid4().hex[:8]}"
-        )
+        if run_dir:
+            self.run_dir = run_dir
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            self.run_dir = os.path.join(config.paths.run_dir, f"run-{timestamp}")
         self.run_id = Path(self.run_dir).name
 
         self.tool_bridge = ToolBridge(config)
