@@ -161,9 +161,16 @@ class Engine:
                     final_result["abort_reason"] = step_result.error
                     break
 
+                if step_result.status == "failure":
+                    final_result["status"] = "failed"
+                    final_result["error"] = step_result.error
+                    final_result["failed_at"] = step["name"]
+                    break
+
                 self.state_manager.complete_module(step["name"])
 
-            final_result["status"] = "completed"
+            if final_result["status"] not in ("failed", "aborted"):
+                final_result["status"] = "completed"
         except Exception as e:
             final_result["status"] = "error"
             final_result["error"] = str(e)
