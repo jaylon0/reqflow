@@ -114,11 +114,7 @@ class APIAdapter(ModelAdapter):
             with urllib.request.urlopen(req) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
         except Exception as e:
-            return ModelResponse(
-                content=f"API call failed: {e}",
-                tokens=TokenUsage(),
-                raw={"error": str(e)},
-            )
+            raise RuntimeError(f"API call failed: {e}") from e
 
         return self._parse_response(result)
 
