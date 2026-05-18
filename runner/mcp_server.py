@@ -336,6 +336,11 @@ async def _handle_run(arguments: dict) -> list:
         if config is None:
             return [TextContent(type="text", text="[错误] 无法自动检测 runtime，请指定 runtime 参数。")]
 
+    # 可用性检查
+    ready, reason = registry.check_readiness(config.name)
+    if not ready:
+        return [TextContent(type="text", text=f"[错误] Runtime '{config.name}' 不可用: {reason}")]
+
     # 选择 workflow（从 YAML 加载）
     steps = _get_workflow_steps(workflow_type)
 
@@ -355,7 +360,11 @@ async def _handle_run(arguments: dict) -> list:
     ]
 
     for step in result.get("steps", []):
-        lines.append(f"  {step.get('name', '?')}: {step.get('status', '?')}")
+        icon = {"success": "[OK]", "failed": "[FAIL]", "skipped": "[SKIP]", "aborted": "[STOP]"}.get(step.get("status", ""), "[?]")
+        lines.append(f"  {icon} {step.get('name', '?')}: {step.get('status', '?')}")
+
+    if result.get("failed_at"):
+        lines.append(f"失败阶段: {result['failed_at']}")
 
     if result.get("error"):
         lines.append(f"错误: {result['error']}")
