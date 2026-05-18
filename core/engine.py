@@ -163,6 +163,15 @@ class Engine:
                     "error": step_result.error,
                     "content": step_result.response.content[:2000] if step_result.response else "",
                 })
+                self.state_manager.state.agent_execution_log.append({
+                    "type": "step",
+                    "step_name": step["name"],
+                    "status": step_result.status,
+                    "duration_ms": step_result.duration_ms,
+                    "error": step_result.error,
+                    "content_preview": step_result.response.content[:500] if step_result.response else "",
+                    "timestamp": datetime.now().isoformat(),
+                })
                 final_result["steps"].append({
                     "name": step["name"],
                     "status": step_result.status,
