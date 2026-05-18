@@ -68,6 +68,9 @@ class Engine:
             self._adapter = ClaudeCodeAdapter()
         elif name in ("gpt", "gemini", "deepseek"):
             self._adapter = APIAdapter.from_config(self.config)
+        elif name in ("host", "host-codex", "host-claude-code", "host-cursor", "host-copilot"):
+            from .adapters.host import HostAgentAdapter
+            self._adapter = HostAgentAdapter(run_dir=self.run_dir)
         elif name == "manual":
             self._adapter = ManualAdapter()
         else:
