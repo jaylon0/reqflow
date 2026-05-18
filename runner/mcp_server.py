@@ -32,6 +32,12 @@ try:
 except ImportError:
     MCP_AVAILABLE = False
 
+    class TextContent:  # type: ignore[no-redef]
+        """MCP 不可用时的占位类，仅用于测试。"""
+        def __init__(self, type: str = "text", text: str = ""):
+            self.type = type
+            self.text = text
+
 
 # --- 延迟导入 reqflow 核心（仅在 MCP 可用时才需要） ---
 
@@ -286,6 +292,14 @@ TOOLS: list[dict] = [
                 },
             },
             "required": ["context"],
+        },
+    },
+    {
+        "name": "reqflow_health",
+        "description": "检查 ReqFlow 系统健康状态和 runtime 可用性。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
         },
     },
 ]
@@ -722,6 +736,49 @@ async def _handle_guardrails(arguments: dict) -> list:
     return [TextContent(type="text", text="\n".join(lines))]
 
 
+async def _handle_health(_arguments: dict) -> list:
+    """处理 reqflow_health 工具调用。"""
+    _, RuntimeRegistry = _import_core()
+
+    lines = ["=== ReqFlow Health Check ==="]
+
+    lines.append("\n[System]")
+    lines.append(f"  reqflow: OK")
+    try:
+        import mcp
+        lines.append(f"  mcp: OK")
+    except ImportError:
+        lines.append(f"  mcp: NOT INSTALLED (pip install mcp)")
+
+    lines.append("\n[Runtimes]")
+    try:
+        registry = RuntimeRegistry()
+        for name in registry.list_runtimes():
+            ready, reason = registry.check_readiness(name)
+            status = "READY" if ready else "NOT READY"
+            line = f"  {name:12s}: {status}"
+            if reason:
+                line += f" — {reason}"
+            lines.append(line)
+    except Exception as exc:
+        lines.append(f"  ERROR: {exc}")
+
+    lines.append("\n[Recommended]")
+    try:
+        registry = RuntimeRegistry()
+        for name in registry.list_runtimes():
+            ready, _ = registry.check_readiness(name)
+            if ready and name not in ("manual",):
+                lines.append(f"  {name}")
+                break
+        else:
+            lines.append(f"  manual (no external runtime available)")
+    except Exception:
+        lines.append(f"  manual")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
 TOOL_HANDLERS = {
     "reqflow_run": _handle_run,
     "reqflow_status": _handle_status,
@@ -734,6 +791,7 @@ TOOL_HANDLERS = {
     "reqflow_parallel": _handle_parallel,
     "reqflow_trace": _handle_trace,
     "reqflow_guardrails": _handle_guardrails,
+    "reqflow_health": _handle_health,
 }
 
 
