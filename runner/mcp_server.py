@@ -753,6 +753,11 @@ async def _handle_health(_arguments: dict) -> list:
     lines.append("\n[Runtimes]")
     try:
         registry = RuntimeRegistry()
+    except Exception as exc:
+        lines.append(f"  ERROR: {exc}")
+        registry = None
+
+    if registry:
         for name in registry.list_runtimes():
             ready, reason = registry.check_readiness(name)
             status = "READY" if ready else "NOT READY"
@@ -760,12 +765,8 @@ async def _handle_health(_arguments: dict) -> list:
             if reason:
                 line += f" — {reason}"
             lines.append(line)
-    except Exception as exc:
-        lines.append(f"  ERROR: {exc}")
 
-    lines.append("\n[Recommended]")
-    try:
-        registry = RuntimeRegistry()
+        lines.append("\n[Recommended]")
         for name in registry.list_runtimes():
             ready, _ = registry.check_readiness(name)
             if ready and name not in ("manual",):
@@ -773,7 +774,8 @@ async def _handle_health(_arguments: dict) -> list:
                 break
         else:
             lines.append(f"  manual (no external runtime available)")
-    except Exception:
+    else:
+        lines.append("\n[Recommended]")
         lines.append(f"  manual")
 
     return [TextContent(type="text", text="\n".join(lines))]
