@@ -8,3 +8,4 @@ build/
 .pytest_cache/
 .dev-workflow/
 .reqflow/
+CLAUDE.md
