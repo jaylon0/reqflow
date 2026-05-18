@@ -161,6 +161,7 @@ class Engine:
                     "status": step_result.status,
                     "duration_ms": step_result.duration_ms,
                     "error": step_result.error,
+                    "content": step_result.response.content[:2000] if step_result.response else "",
                 })
                 final_result["steps"].append({
                     "name": step["name"],
