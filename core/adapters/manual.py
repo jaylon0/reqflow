@@ -72,7 +72,12 @@ class ManualAdapter(ModelAdapter):
             try:
                 line = input(">>> ")
             except EOFError:
-                break
+                return ModelResponse(
+                    content="[BLOCKED] 非交互模式无法获取人工输入，请使用 host runtime 或显式指定 --runtime。",
+                    tool_calls=[],
+                    tokens=TokenUsage(),
+                    raw={"mode": "manual", "status": "blocked", "reason": "eof"},
+                )
             if line.strip().lower() in ("done", "skip", "quit"):
                 break
             result_lines.append(line)
@@ -120,7 +125,11 @@ class ManualAdapter(ModelAdapter):
             try:
                 line = input(">>> ")
             except EOFError:
-                break
+                return ToolResult(
+                    success=False,
+                    output="",
+                    error="[BLOCKED] 非交互模式无法获取人工输入。",
+                )
             if line.strip().lower() in ("done", "skip"):
                 break
             result_lines.append(line)
