@@ -1,5 +1,11 @@
+import asyncio
+import shutil
+
 import pytest
+
 from reqflow.core.adapters.api import APIAdapter
+from reqflow.core.engine import Engine, StepResult
+from reqflow.core.runtime_config import RuntimeConfig
 
 
 def test_api_adapter_raises_on_http_error():
@@ -12,11 +18,6 @@ def test_api_adapter_raises_on_http_error():
     )
     with pytest.raises(RuntimeError, match="API call failed"):
         adapter.call(prompt="test")
-
-
-import asyncio
-from reqflow.core.engine import Engine, StepResult
-from reqflow.core.runtime_config import RuntimeConfig
 
 
 def test_engine_stops_on_step_failure():
@@ -47,5 +48,4 @@ def test_engine_stops_on_step_failure():
     assert "step2" not in executed_steps
     assert "step3" not in executed_steps
 
-    import shutil
     shutil.rmtree("/tmp/test-fail-fast", ignore_errors=True)
