@@ -4,7 +4,7 @@
 
 **Goal:** 修复 reqflow 在真实项目测试中暴露的 12 个问题，使状态可信、runtime 可靠、产物可追踪。
 
-**Architecture:** 按根因分组修复：A) 状态可信度（假成功/失败阻断/Dashboard 真实性）、B) Runtime 生命周期（默认策略/前置检查/health/超时）、C) 产物可观测性（run id 统一/阶段产物/失败报告）。每个 task 独立可测试。
+**Architecture:** 分层修复：第一层状态可信度（API adapter raise + engine fail-fast + dashboard + manual EOF）、第二层 Runtime 生命周期（readiness check + 默认策略 + health + host adapter）、第三层产物可观测性（run id 统一 + stage_records + host task CLI）。每个 task 独立可测试。
 
 **Tech Stack:** Python 3.10+, pytest, YAML
 
@@ -15,40 +15,41 @@
 ```
 reqflow/
 ├── core/
-│   ├── engine.py              # Modify: fail-fast on step failure
-│   ├── registry.py            # Modify: add runtime readiness check
-│   ├── runtime_config.py      # Modify: add is_external flag
+│   ├── engine.py              # Modify: fail-fast, stage_records, host adapter registration, run_id
+│   ├── registry.py            # Modify: add check_readiness
+│   ├── state_manager.py       # Modify: add stage_records to RunState
 │   └── adapters/
-│       ├── api.py             # Modify: raise on API error instead of returning error response
-│       ├── manual.py          # Modify: EOF returns blocked status
-│       └── host.py            # Create: HostAgentAdapter with timeout handling
+│       ├── api.py             # Modify: raise on HTTP error
+│       ├── manual.py          # Modify: EOF returns blocked
+│       └── host.py            # Create: HostAgentAdapter
 ├── runner/
-│   ├── mcp_server.py          # Modify: default runtime selection, health enhancement
-│   ├── cli.py                 # Modify: default runtime selection
-│   ├── dashboard.py           # Modify: show real failure status
-│   └── host_task.py           # Create: CLI fallback for host task protocol
+│   ├── mcp_server.py          # Modify: default runtime, readiness check, reqflow_health
+│   ├── cli.py                 # Modify: default runtime
+│   ├── dashboard.py           # Modify: per-step status display
+│   └── host_task.py           # Create: CLI fallback
 ├── runtime/providers/
-│   ├── host.yaml              # Create: generic host runtime config
-│   └── host-codex.yaml        # Create: Codex platform adapter
+│   ├── host.yaml              # Create
+│   └── host-codex.yaml        # Create
 └── tests/
-    ├── test_fail_fast.py      # Create: fail-fast behavior tests
-    ├── test_runtime_readiness.py  # Create: runtime readiness check tests
-    ├── test_host_adapter.py   # Create: host adapter tests
-    ├── test_manual_eof.py     # Create: manual EOF behavior tests (exists, update)
-    ├── test_dashboard_real.py # Create: dashboard real status tests
-    ├── test_run_id.py         # Create: run id consistency tests
-    └── test_health.py         # Create: enhanced health check tests
+    ├── test_fail_fast.py      # Create
+    ├── test_runtime_readiness.py  # Create
+    ├── test_health.py         # Create
+    ├── test_manual_eof.py     # Create
+    ├── test_host_adapter.py   # Create
+    ├── test_dashboard_real.py # Create
+    ├── test_run_id.py         # Create
+    ├── test_stage_records.py  # Create
+    ├── test_host_task_cli.py  # Create
+    └── test_mcp_run_integration.py  # Create
 ```
 
 ---
 
-### Task 1: API Adapter 错误传播 — 假成功根因修复
+### Task 1: API Adapter 错误传播
 
 **Files:**
-- Modify: `core/adapters/api.py:113-121`
+- Modify: `core/adapters/api.py`
 - Create: `tests/test_fail_fast.py`
-
-API adapter 在 HTTP 401/403/500 时返回 `ModelResponse(content="API call failed: ...")` 而不是抛异常，导致 engine 把它当作正常响应，step 标记为 success。这是假成功的根因。
 
 - [ ] **Step 1: Write the failing test**
 
@@ -66,7 +67,6 @@ def test_api_adapter_raises_on_http_error():
         model="gpt-4o",
         provider="openai",
     )
-    # httpbin/status/401 always returns 401
     with pytest.raises(RuntimeError, match="API call failed"):
         adapter.call(prompt="test")
 ```
@@ -74,11 +74,11 @@ def test_api_adapter_raises_on_http_error():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_fail_fast.py::test_api_adapter_raises_on_http_error -v`
-Expected: FAIL (current code returns ModelResponse instead of raising)
+Expected: FAIL — current code returns ModelResponse instead of raising
 
-- [ ] **Step 3: Fix API adapter to raise on error**
+- [ ] **Step 3: Fix API adapter**
 
-In `core/adapters/api.py`, replace lines 113-121:
+In `core/adapters/api.py`, replace lines 116-121:
 
 ```python
 # Before:
@@ -108,23 +108,20 @@ git commit -m "fix: API adapter raises on HTTP error instead of returning error 
 
 ---
 
-### Task 2: Engine Fail-Fast — 步骤失败阻断后续执行
+### Task 2: Engine Fail-Fast
 
 **Files:**
-- Modify: `core/engine.py:159-165`
+- Modify: `core/engine.py`
 - Modify: `tests/test_fail_fast.py`
-
-当前 engine 在 step 返回 failure 时继续执行后续步骤，最终标记为 completed。必须在 step failure 时阻断。
 
 - [ ] **Step 1: Write the failing test**
 
-在 `tests/test_fail_fast.py` 中追加：
+Append to `tests/test_fail_fast.py`:
 
 ```python
 import asyncio
-from reqflow.core.engine import Engine
+from reqflow.core.engine import Engine, StepResult
 from reqflow.core.runtime_config import RuntimeConfig
-from reqflow.core.adapters.base import ModelResponse, TokenUsage
 
 
 def test_engine_stops_on_step_failure():
@@ -132,25 +129,20 @@ def test_engine_stops_on_step_failure():
     config = RuntimeConfig(name="manual", display_name="Manual")
     engine = Engine(config=config, run_dir="/tmp/test-fail-fast")
 
-    # Track which steps executed
     executed_steps = []
-
-    # Monkey-patch run_step to simulate failure on first step
-    original_run_step = engine.run_step
 
     async def mock_run_step(step, context=None):
         executed_steps.append(step["name"])
         if step["name"] == "step1":
-            from reqflow.core.engine import StepResult
             return StepResult(name="step1", status="failure", error="simulated failure")
         return StepResult(name=step["name"], status="success")
 
     engine.run_step = mock_run_step
 
     steps = [
-        {"name": "step1", "prompt": "first step"},
-        {"name": "step2", "prompt": "second step"},
-        {"name": "step3", "prompt": "third step"},
+        {"name": "step1", "prompt": "first"},
+        {"name": "step2", "prompt": "second"},
+        {"name": "step3", "prompt": "third"},
     ]
 
     result = asyncio.run(engine.run_workflow(workflow_steps=steps, requirement="test"))
@@ -167,11 +159,11 @@ def test_engine_stops_on_step_failure():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_fail_fast.py::test_engine_stops_on_step_failure -v`
-Expected: FAIL (current engine doesn't have failed_at or stop logic)
+Expected: FAIL — engine doesn't have fail-fast logic
 
 - [ ] **Step 3: Implement fail-fast in engine**
 
-In `core/engine.py`, in the `run_workflow` method, after the `aborted` check (line ~159), add:
+In `core/engine.py`, in `run_workflow` method, after the `aborted` check (line ~159), add:
 
 ```python
                 if step_result.status == "failure":
@@ -191,62 +183,134 @@ to:
                 final_result["status"] = "completed"
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests to verify**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_fail_fast.py -v`
 Expected: PASS (both tests)
 
-- [ ] **Step 5: Run all existing tests to check for regressions**
+- [ ] **Step 5: Run all existing tests**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/ -v`
-Expected: All existing tests still pass
+Expected: All pass
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add core/engine.py tests/test_fail_fast.py
-git commit -m "fix: engine stops on step failure instead of continuing to next steps"
+git commit -m "fix: engine stops on step failure instead of continuing"
 ```
 
 ---
 
-### Task 3: Runtime Readiness Check — 执行前验证 runtime 可用性
+### Task 3: Manual Runtime EOF 修正
+
+**Files:**
+- Modify: `core/adapters/manual.py`
+- Create: `tests/test_manual_eof.py`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_manual_eof.py
+from unittest.mock import patch
+from reqflow.core.adapters.manual import ManualAdapter
+
+
+def test_manual_eof_returns_blocked_content():
+    """Manual adapter on EOF should indicate blocked, not empty success."""
+    adapter = ManualAdapter()
+
+    with patch("builtins.input", side_effect=EOFError):
+        response = adapter.call(prompt="test task")
+
+    assert response.content != ""
+    assert "blocked" in response.content.lower() or "eof" in response.content.lower() or "无法" in response.content
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_manual_eof.py -v`
+Expected: FAIL — current returns empty content on EOF
+
+- [ ] **Step 3: Fix ManualAdapter EOF handling**
+
+In `core/adapters/manual.py`, replace lines 73-75:
+
+```python
+# Before:
+            except EOFError:
+                break
+
+# After:
+            except EOFError:
+                return ModelResponse(
+                    content="[BLOCKED] 非交互模式无法获取人工输入，请使用 host runtime 或显式指定 --runtime。",
+                    tool_calls=[],
+                    tokens=TokenUsage(),
+                    raw={"mode": "manual", "status": "blocked", "reason": "eof"},
+                )
+```
+
+Also fix `execute_tool` method — find the `except EOFError: break` around line 121 and replace:
+
+```python
+# Before:
+            except EOFError:
+                break
+
+# After:
+            except EOFError:
+                return ToolResult(
+                    success=False,
+                    output="",
+                    error="[BLOCKED] 非交互模式无法获取人工输入。",
+                )
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_manual_eof.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add core/adapters/manual.py tests/test_manual_eof.py
+git commit -m "fix: manual adapter returns blocked on EOF instead of empty success"
+```
+
+---
+
+### Task 4: Runtime Readiness Check
 
 **Files:**
 - Modify: `core/registry.py`
-- Modify: `tests/test_runtime_readiness.py` (create)
-
-`reqflow_health` 只检查插件和 MCP，不验证 runtime 是否真正可用。需要在执行前做 readiness check。
+- Create: `tests/test_runtime_readiness.py`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_runtime_readiness.py
 import os
-import pytest
 from reqflow.core.registry import RuntimeRegistry
 
 
-def test_runtime_readiness_check_missing_api_key():
+def test_runtime_readiness_missing_api_key():
     """Runtime with missing API key should fail readiness check."""
     registry = RuntimeRegistry()
-    config = registry.get("gpt")
-
-    # Ensure no API key is set
     old_key = os.environ.pop("OPENAI_API_KEY", None)
     try:
         ready, reason = registry.check_readiness("gpt")
         assert ready is False
-        assert "API key" in reason or "api_key" in reason.lower()
+        assert "API key" in reason or "api_key" in reason.lower() or "未配置" in reason
     finally:
         if old_key:
             os.environ["OPENAI_API_KEY"] = old_key
 
 
-def test_runtime_readiness_check_with_api_key():
+def test_runtime_readiness_with_api_key():
     """Runtime with API key set should pass readiness check."""
     registry = RuntimeRegistry()
-
     old_key = os.environ.get("OPENAI_API_KEY")
     os.environ["OPENAI_API_KEY"] = "sk-test-key"
     try:
@@ -264,37 +328,25 @@ def test_runtime_readiness_manual_always_ready():
     registry = RuntimeRegistry()
     ready, reason = registry.check_readiness("manual")
     assert ready is True
-
-
-def test_runtime_readiness_host_always_ready():
-    """Host runtime should always be ready (uses current agent)."""
-    registry = RuntimeRegistry()
-    ready, reason = registry.check_readiness("host")
-    assert ready is True
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_runtime_readiness.py -v`
-Expected: FAIL (check_readiness method doesn't exist)
+Expected: FAIL — check_readiness doesn't exist
 
-- [ ] **Step 3: Implement check_readiness in RuntimeRegistry**
+- [ ] **Step 3: Implement check_readiness**
 
-在 `core/registry.py` 的 `RuntimeRegistry` 类中添加：
+In `core/registry.py`, add to `RuntimeRegistry` class:
 
 ```python
     def check_readiness(self, name: str) -> tuple[bool, str]:
-        """Check if a runtime is ready to execute.
-
-        Returns (ready, reason). ready=True means the runtime can be used.
-        """
+        """Check if a runtime is ready to execute."""
         config = self.get(name)
 
-        # Host and manual runtimes are always ready
         if config.name in ("manual", "host"):
             return True, ""
 
-        # API runtimes need an API key
         if config.env_key:
             import os
             api_key = config.api_key or os.environ.get(config.env_key, "")
@@ -304,7 +356,6 @@ Expected: FAIL (check_readiness method doesn't exist)
         if config.api_key:
             return True, ""
 
-        # If no env_key and no api_key, check if it's a non-API runtime
         if not config.env_key and not config.api_base:
             return True, ""
 
@@ -320,41 +371,35 @@ Expected: PASS
 
 ```bash
 git add core/registry.py tests/test_runtime_readiness.py
-git commit -m "feat: add runtime readiness check before execution"
+git commit -m "feat: add runtime readiness check"
 ```
 
 ---
 
-### Task 4: Default Runtime Selection — 优先 host runtime，不隐式走第三方 API
+### Task 5: Default Runtime Selection
 
 **Files:**
-- Modify: `runner/mcp_server.py:745-765`
-- Modify: `runner/cli.py:480-503`
+- Modify: `runner/mcp_server.py`
+- Modify: `runner/cli.py`
 - Modify: `tests/test_runtime_readiness.py`
-
-当前自动检测按 `claude > gpt > gemini > deepseek > manual` 优先级，会隐式选择需要外部 API 的 runtime。应该优先选择 host runtime。
 
 - [ ] **Step 1: Write the failing test**
 
-在 `tests/test_runtime_readiness.py` 追加：
+Append to `tests/test_runtime_readiness.py`:
 
 ```python
 def test_default_runtime_prefers_host_over_api():
     """Default runtime detection should prefer host over external API runtimes."""
     registry = RuntimeRegistry()
-
-    # Save and clear all API keys
     saved_keys = {}
     for provider in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"):
         saved_keys[provider] = os.environ.pop(provider, None)
-
     try:
-        # The default detection should pick host or manual, not gpt
-        from runner.mcp_server import _detect_runtime
+        from reqflow.runner.mcp_server import _detect_runtime
         config = _detect_runtime(registry)
         assert config is not None
         assert config.name not in ("gpt", "gemini", "deepseek"), \
-            f"Default runtime should not be an external API runtime, got {config.name}"
+            f"Default runtime should not be external API, got {config.name}"
     finally:
         for k, v in saved_keys.items():
             if v is not None:
@@ -364,22 +409,17 @@ def test_default_runtime_prefers_host_over_api():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_runtime_readiness.py::test_default_runtime_prefers_host_over_api -v`
-Expected: FAIL (current detection picks gpt first)
+Expected: FAIL — current detection picks gpt
 
 - [ ] **Step 3: Fix _detect_runtime in mcp_server.py**
 
-在 `runner/mcp_server.py` 中替换 `_detect_runtime` 函数（行 745-765）：
+Replace the `_detect_runtime` function (lines 745-765) in `runner/mcp_server.py`:
 
 ```python
 def _detect_runtime(registry) -> object | None:
-    """尝试自动检测合适的 runtime。
-
-    优先级：环境变量指定 > host > manual > 有 API key 的外部 runtime。
-    不隐式选择需要外部 API 但未配置 key 的 runtime。
-    """
+    """自动检测 runtime。优先级：环境变量 > host > manual > 有 key 的外部 runtime。"""
     import os
 
-    # 1. 显式指定
     env_runtime = os.environ.get("REQFLOW_RUNTIME", "").lower()
     if env_runtime:
         try:
@@ -387,20 +427,17 @@ def _detect_runtime(registry) -> object | None:
         except ValueError:
             pass
 
-    # 2. Host runtime（当前 agent 平台）
     for name in ("host",):
         try:
             return registry.get(name)
         except ValueError:
             continue
 
-    # 3. Manual（总是可用）
     try:
         return registry.get("manual")
     except ValueError:
         pass
 
-    # 4. 有 API key 的外部 runtime
     for name in ("claude", "gpt", "gemini", "deepseek"):
         try:
             config = registry.get(name)
@@ -414,14 +451,14 @@ def _detect_runtime(registry) -> object | None:
     return None
 ```
 
-同样修复 `runner/cli.py` 中的 `_detect_runtime` 函数（行 480-503），使用相同逻辑。
+Apply the same fix to `runner/cli.py` `_detect_runtime` function (lines 480-503).
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_runtime_readiness.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Run all existing tests**
+- [ ] **Step 5: Run all tests**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/ -v`
 Expected: All pass
@@ -430,18 +467,16 @@ Expected: All pass
 
 ```bash
 git add runner/mcp_server.py runner/cli.py tests/test_runtime_readiness.py
-git commit -m "fix: default runtime prefers host over external API runtimes"
+git commit -m "fix: default runtime prefers host over external API"
 ```
 
 ---
 
-### Task 5: Health Check 增强 — 区分 system/runtime/workflow health
+### Task 6: Health Check 增强
 
 **Files:**
-- Modify: `runner/mcp_server.py` — 添加 `reqflow_health` 工具
-- Modify: `tests/test_health.py` (create)
-
-当前 health 只检查插件和 MCP，不检查 runtime 可用性。需要区分 system health、runtime health、workflow readiness。
+- Modify: `runner/mcp_server.py`
+- Create: `tests/test_health.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -449,7 +484,6 @@ git commit -m "fix: default runtime prefers host over external API runtimes"
 # tests/test_health.py
 import os
 import asyncio
-import pytest
 from reqflow.runner.mcp_server import _handle_health
 
 
@@ -467,7 +501,6 @@ def test_health_reports_unavailable_runtime():
     try:
         result = asyncio.run(_handle_health({}))
         text = result[0].text
-        # Should mention gpt is not ready or missing key
         assert "gpt" in text.lower()
     finally:
         if old_key:
@@ -477,21 +510,32 @@ def test_health_reports_unavailable_runtime():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_health.py -v`
-Expected: FAIL (_handle_health doesn't exist)
+Expected: FAIL — _handle_health doesn't exist
 
-- [ ] **Step 3: Add reqflow_health tool and handler**
+- [ ] **Step 3: Implement reqflow_health**
 
-在 `runner/mcp_server.py` 的 TOOLS 列表中添加 reqflow_health 工具定义，并实现 `_handle_health`：
+In `runner/mcp_server.py`, add the tool definition to TOOLS list:
+
+```python
+    {
+        "name": "reqflow_health",
+        "description": "检查 ReqFlow 系统健康状态和 runtime 可用性。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+```
+
+Add the handler function before TOOL_HANDLERS:
 
 ```python
 async def _handle_health(_arguments: dict) -> list:
-    """处理 reqflow_health 工具调用。返回系统和 runtime 健康状态。"""
+    """处理 reqflow_health 工具调用。"""
     _, RuntimeRegistry = _import_core()
-    import os
 
     lines = ["=== ReqFlow Health Check ==="]
 
-    # System health
     lines.append("\n[System]")
     lines.append(f"  reqflow: OK")
     try:
@@ -500,7 +544,6 @@ async def _handle_health(_arguments: dict) -> list:
     except ImportError:
         lines.append(f"  mcp: NOT INSTALLED (pip install mcp)")
 
-    # Runtime health
     lines.append("\n[Runtimes]")
     try:
         registry = RuntimeRegistry()
@@ -514,7 +557,6 @@ async def _handle_health(_arguments: dict) -> list:
     except Exception as exc:
         lines.append(f"  ERROR: {exc}")
 
-    # Recommended runtime
     lines.append("\n[Recommended]")
     try:
         registry = RuntimeRegistry()
@@ -531,20 +573,7 @@ async def _handle_health(_arguments: dict) -> list:
     return [TextContent(type="text", text="\n".join(lines))]
 ```
 
-在 TOOLS 列表中添加：
-
-```python
-    {
-        "name": "reqflow_health",
-        "description": "检查 ReqFlow 系统健康状态和 runtime 可用性。",
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
-```
-
-在 TOOL_HANDLERS 中添加 `"reqflow_health": _handle_health`。
+Add to TOOL_HANDLERS: `"reqflow_health": _handle_health`
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -555,89 +584,19 @@ Expected: PASS
 
 ```bash
 git add runner/mcp_server.py tests/test_health.py
-git commit -m "feat: enhanced health check with runtime readiness reporting"
+git commit -m "feat: enhanced health check with runtime readiness"
 ```
 
 ---
 
-### Task 6: Manual Runtime EOF 修正 — 非交互模式不假成功
-
-**Files:**
-- Modify: `core/adapters/manual.py:71-75`
-- Modify: `tests/test_manual_eof.py` (exists, update)
-
-Manual adapter 在 EOF 时返回空 content 但 status=success，在非交互场景会假成功。
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# tests/test_manual_eof.py
-from unittest.mock import patch
-from reqflow.core.adapters.manual import ManualAdapter
-
-
-def test_manual_eof_returns_blocked_content():
-    """Manual adapter on EOF should indicate blocked, not empty success."""
-    adapter = ManualAdapter()
-
-    # Simulate EOF by making input() raise EOFError
-    with patch("builtins.input", side_effect=EOFError):
-        response = adapter.call(prompt="test task")
-
-    # Response should indicate it was blocked, not just empty
-    assert response.content != ""
-    assert "blocked" in response.content.lower() or "eof" in response.content.lower() or "无法" in response.content
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_manual_eof.py -v`
-Expected: FAIL (current returns empty content on EOF)
-
-- [ ] **Step 3: Fix ManualAdapter EOF handling**
-
-在 `core/adapters/manual.py` 中，将 EOFError 处理从 `break` 改为返回 blocked 信号：
-
-```python
-# Before (line 73-75):
-            except EOFError:
-                break
-
-# After:
-            except EOFError:
-                return ModelResponse(
-                    content="[BLOCKED] 非交互模式无法获取人工输入，请使用 host runtime 或显式指定 --runtime。",
-                    tool_calls=[],
-                    tokens=TokenUsage(),
-                    raw={"mode": "manual", "status": "blocked", "reason": "eof"},
-                )
-```
-
-同样修改 `execute_tool` 方法中的 EOFError 处理。
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_manual_eof.py -v`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add core/adapters/manual.py tests/test_manual_eof.py
-git commit -m "fix: manual adapter returns blocked on EOF instead of empty success"
-```
-
----
-
-### Task 7: Host Runtime YAML 和 Adapter 创建
+### Task 7: Host Runtime YAML + Adapter
 
 **Files:**
 - Create: `runtime/providers/host.yaml`
 - Create: `runtime/providers/host-codex.yaml`
 - Create: `core/adapters/host.py`
+- Modify: `core/engine.py`
 - Create: `tests/test_host_adapter.py`
-
-Host runtime 是跨 agent 平台的核心抽象，通过 TaskPacket/ResultPacket 通信。
 
 - [ ] **Step 1: Create host.yaml**
 
@@ -703,7 +662,6 @@ paths:
 
 ```python
 # tests/test_host_adapter.py
-import asyncio
 import json
 import os
 import shutil
@@ -712,10 +670,9 @@ from reqflow.core.adapters.host import HostAgentAdapter
 
 
 def test_host_adapter_creates_task_packet():
-    """Host adapter should create a task packet file for the host agent."""
+    """Host adapter should create a task packet file."""
     run_dir = "/tmp/test-host-adapter"
     os.makedirs(run_dir, exist_ok=True)
-
     try:
         adapter = HostAgentAdapter(run_dir=run_dir)
         packet = adapter.create_task_packet(
@@ -725,23 +682,20 @@ def test_host_adapter_creates_task_packet():
             required_tools=["bash", "read_file"],
             expected_artifacts=["output.md"],
         )
-
         assert packet["stage_id"] == "test-stage"
         assert packet["required_tools"] == ["bash", "read_file"]
-        assert "task.json" in os.listdir(run_dir) or packet.get("task_file")
+        assert (Path(run_dir) / "task.json").exists()
     finally:
         shutil.rmtree(run_dir, ignore_errors=True)
 
 
 def test_host_adapter_returns_blocked_without_result():
-    """Host adapter should return blocked status when no result packet exists."""
+    """Host adapter should return blocked when no result packet exists."""
     run_dir = "/tmp/test-host-no-result"
     os.makedirs(run_dir, exist_ok=True)
-
     try:
         adapter = HostAgentAdapter(run_dir=run_dir)
         response = adapter.call(prompt="test")
-
         assert "blocked" in response.content.lower() or "task" in response.content.lower()
     finally:
         shutil.rmtree(run_dir, ignore_errors=True)
@@ -751,22 +705,16 @@ def test_host_adapter_consumes_result_packet():
     """Host adapter should consume result packet and return success."""
     run_dir = "/tmp/test-host-result"
     os.makedirs(run_dir, exist_ok=True)
-
     try:
         adapter = HostAgentAdapter(run_dir=run_dir)
-
-        # Write a result packet
         result_packet = {
             "status": "success",
             "summary": "Task completed",
             "artifacts": ["output.md"],
             "files_changed": ["src/main.py"],
         }
-        result_file = Path(run_dir) / "result.json"
-        result_file.write_text(json.dumps(result_packet))
-
+        (Path(run_dir) / "result.json").write_text(json.dumps(result_packet))
         response = adapter.call(prompt="test")
-
         assert "success" in response.content.lower() or "completed" in response.content.lower()
     finally:
         shutil.rmtree(run_dir, ignore_errors=True)
@@ -775,31 +723,26 @@ def test_host_adapter_consumes_result_packet():
 - [ ] **Step 4: Run test to verify it fails**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_host_adapter.py -v`
-Expected: FAIL (host adapter doesn't exist)
+Expected: FAIL — host adapter doesn't exist
 
 - [ ] **Step 5: Implement HostAgentAdapter**
 
+Create `core/adapters/host.py`:
+
 ```python
-# core/adapters/host.py
 """HostAgentAdapter - adapter for host agent runtime with task/result packet protocol."""
 
 from __future__ import annotations
 
 import json
-import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .base import ModelAdapter, ModelResponse, ToolResult, ToolCall, TokenUsage
+from .base import ModelAdapter, ModelResponse, ToolResult, TokenUsage
 
 
 class HostAgentAdapter(ModelAdapter):
-    """Adapter that communicates via TaskPacket/ResultPacket protocol.
-
-    When the host agent can execute tools directly, it runs them.
-    Otherwise, it writes a task packet and waits for a result packet.
-    """
+    """Adapter that communicates via TaskPacket/ResultPacket file protocol."""
 
     def __init__(self, run_dir: str | None = None):
         self._run_dir = run_dir or ".reqflow/runs/default"
@@ -827,7 +770,6 @@ class HostAgentAdapter(ModelAdapter):
             "expected_artifacts": expected_artifacts or [],
             "acceptance_criteria": acceptance_criteria or [],
         }
-
         task_file = Path(self._run_dir) / "task.json"
         task_file.write_text(json.dumps(packet, indent=2, ensure_ascii=False))
         packet["task_file"] = str(task_file)
@@ -840,15 +782,8 @@ class HostAgentAdapter(ModelAdapter):
         context: str | None = None,
         system_prompt: str | None = None,
     ) -> ModelResponse:
-        """Execute via host agent protocol.
-
-        1. Check for existing result packet
-        2. If found, consume it and return
-        3. If not found, write task packet and return blocked
-        """
         self._step_count += 1
 
-        # Check for result packet
         result_file = Path(self._run_dir) / "result.json"
         if result_file.exists():
             try:
@@ -857,8 +792,6 @@ class HostAgentAdapter(ModelAdapter):
                 summary = result_data.get("summary", "")
                 artifacts = result_data.get("artifacts", [])
                 files_changed = result_data.get("files_changed", [])
-
-                # Clean up consumed result
                 result_file.unlink()
 
                 content_parts = [f"[HOST RESULT] Status: {status}"]
@@ -875,10 +808,9 @@ class HostAgentAdapter(ModelAdapter):
                     tokens=TokenUsage(),
                     raw=result_data,
                 )
-            except (json.JSONDecodeError, OSError) as e:
+            except (json.JSONDecodeError, OSError):
                 pass
 
-        # No result packet — write task packet and return blocked
         task_packet = self.create_task_packet(
             stage_id=f"step-{self._step_count}",
             stage_name=f"Step {self._step_count}",
@@ -887,27 +819,23 @@ class HostAgentAdapter(ModelAdapter):
         )
 
         return ModelResponse(
-            content=f"[BLOCKED] 等待 host agent 执行任务。Task packet 已写入: {task_packet.get('task_file', 'task.json')}。"
-                    f"\n请通过 host agent 执行后将结果写入 result.json。",
+            content=f"[BLOCKED] 等待 host agent 执行任务。Task packet: {task_packet.get('task_file', 'task.json')}",
             tool_calls=[],
             tokens=TokenUsage(),
             raw={"status": "blocked", "task_packet": task_packet},
         )
 
     def execute_tool(self, tool_name: str, args: dict[str, Any]) -> ToolResult:
-        """Host adapter delegates tool execution to the host agent."""
         return ToolResult(
-            success=False,
-            output="",
-            error=f"Host adapter delegates tool execution to the host agent. Use host-task CLI or MCP.",
+            success=False, output="",
+            error="Host adapter delegates tool execution to host agent.",
         )
 
     def supports_capability(self, capability: str) -> bool:
-        """Host adapter supports all capabilities (delegated to host agent)."""
         return True
 ```
 
-在 `core/engine.py` 的 `select_adapter` 方法中添加 host 适配：
+In `core/engine.py`, in `select_adapter` method, add after the `manual` branch:
 
 ```python
         elif name in ("host", "host-codex", "host-claude-code", "host-cursor", "host-copilot"):
@@ -929,14 +857,11 @@ git commit -m "feat: add host runtime adapter with task/result packet protocol"
 
 ---
 
-### Task 8: Dashboard 显示真实失败状态
+### Task 8: Dashboard 真实状态
 
 **Files:**
 - Modify: `runner/dashboard.py`
-- Modify: `runner/mcp_server.py` — `_handle_dashboard`
 - Create: `tests/test_dashboard_real.py`
-
-Dashboard 当前只显示 completed_modules 数量，不区分成功/失败。需要显示每阶段的真实状态。
 
 - [ ] **Step 1: Write the failing test**
 
@@ -953,19 +878,13 @@ def test_dashboard_shows_failed_status():
     """Dashboard should show failed stages, not just completed count."""
     run_dir = "/tmp/test-dashboard-real"
     os.makedirs(run_dir, exist_ok=True)
-
     try:
-        # Create a state.json with mixed statuses
         state = {
             "run_id": "test-run",
             "current_stage": "stage2",
             "completed_modules": ["stage1"],
             "checkpoints": [],
             "memory": {"short_term": []},
-            "stage_records": [
-                {"name": "stage1", "status": "success", "duration_ms": 1000},
-                {"name": "stage2", "status": "failed", "error": "HTTP 401", "duration_ms": 500},
-            ],
         }
         (Path(run_dir) / "state.json").write_text(json.dumps(state))
 
@@ -982,11 +901,7 @@ def test_dashboard_shows_failed_status():
             "memory_entries": 0,
         }
         output = dashboard.format_status(status)
-
-        # Must show failure
         assert "fail" in output.lower() or "FAIL" in output or "[FAIL]" in output
-        # Must NOT show all as done
-        assert "11 executed" not in output  # Not all as success
     finally:
         shutil.rmtree(run_dir, ignore_errors=True)
 ```
@@ -994,20 +909,19 @@ def test_dashboard_shows_failed_status():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_dashboard_real.py -v`
-Expected: FAIL (dashboard doesn't show per-step status)
+Expected: FAIL — dashboard doesn't show per-step status
 
-- [ ] **Step 3: Fix dashboard to show per-step status**
+- [ ] **Step 3: Fix dashboard**
 
-修改 `runner/dashboard.py` 的 `format_status` 方法，添加 step_statuses 展示：
+In `runner/dashboard.py`, in `format_status` method, after the existing output, append:
 
 ```python
-    # 在现有输出后追加
-    step_statuses = status.get("step_statuses", {})
-    if step_statuses:
-        lines.append("\n--- Step Status ---")
-        for name, st in step_statuses.items():
-            icon = {"success": "[OK]", "failed": "[FAIL]", "skipped": "[SKIP]", "aborted": "[STOP]"}.get(st, "[?]")
-            lines.append(f"  {icon:7s} {name}")
+        step_statuses = status.get("step_statuses", {})
+        if step_statuses:
+            lines.append("\n--- Step Status ---")
+            for name, st in step_statuses.items():
+                icon = {"success": "[OK]", "failed": "[FAIL]", "skipped": "[SKIP]", "aborted": "[STOP]"}.get(st, "[?]")
+                lines.append(f"  {icon:7s} {name}")
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1027,11 +941,8 @@ git commit -m "fix: dashboard shows per-step real status including failures"
 ### Task 9: Run ID 统一
 
 **Files:**
-- Modify: `core/engine.py:43-46`
-- Modify: `runner/mcp_server.py` — dashboard handler
+- Modify: `core/engine.py`
 - Create: `tests/test_run_id.py`
-
-当前 run_id 在目录名、UUID、trace 中不一致。统一为用户指定的目录名或自动生成的可读名。
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1043,44 +954,42 @@ from reqflow.core.runtime_config import RuntimeConfig
 
 
 def test_run_id_matches_dir_name():
-    """run_id should match the directory name, not a separate UUID."""
+    """run_id should match the directory name."""
     config = RuntimeConfig(name="manual", display_name="Manual")
-    run_dir = "/tmp/test-run-id-consistency"
-    engine = Engine(config=config, run_dir=run_dir)
-
-    # run_id should be derived from run_dir
+    engine = Engine(config=config, run_dir="/tmp/test-run-id-consistency")
     assert engine.run_id == "test-run-id-consistency"
+    shutil.rmtree("/tmp/test-run-id-consistency", ignore_errors=True)
 
-    shutil.rmtree(run_dir, ignore_errors=True)
 
-
-def test_run_id_user_specified():
-    """When user specifies run_dir, run_id should be the dir basename."""
+def test_run_id_auto_generated_is_readable():
+    """Auto-generated run_id should be human-readable, not UUID."""
     config = RuntimeConfig(name="manual", display_name="Manual")
-    run_dir = "/tmp/my-feature-20260518"
-    engine = Engine(config=config, run_dir=run_dir)
-
-    assert engine.run_id == "my-feature-20260518"
-
-    shutil.rmtree(run_dir, ignore_errors=True)
+    engine = Engine(config=config)
+    assert "run-" in engine.run_id
+    assert len(engine.run_id) < 30  # Not a UUID
+    shutil.rmtree(engine.run_dir, ignore_errors=True)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_run_id.py -v`
-Expected: FAIL (current run_id uses uuid, not dir name)
+Expected: FAIL — auto-generated run_id uses UUID
 
-- [ ] **Step 3: Fix run_id to use directory name**
+- [ ] **Step 3: Fix run_id generation**
 
-在 `core/engine.py` 中，将 `__init__` 的 run_id 从 `Path(self.run_dir).name` 确认为一致。当前已经是 `self.run_id = Path(self.run_dir).name`，但当 `run_dir` 为 None 时会生成 `run-{uuid}`。修复：
+In `core/engine.py`, replace lines 43-46:
 
 ```python
-    def __init__(self, config: RuntimeConfig, run_dir: str | None = None, workflows_dir: str | None = None):
-        self.config = config
+# Before:
+        self.run_dir = run_dir or os.path.join(
+            config.paths.run_dir, f"run-{uuid.uuid4().hex[:8]}"
+        )
+        self.run_id = Path(self.run_dir).name
+
+# After:
         if run_dir:
             self.run_dir = run_dir
         else:
-            # Generate readable run id instead of UUID
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             self.run_dir = os.path.join(config.paths.run_dir, f"run-{timestamp}")
@@ -1101,20 +1010,104 @@ git commit -m "fix: unify run_id to use directory name instead of UUID"
 
 ---
 
-### Task 10: MCP reqflow_run 集成 — readiness check + fail-fast + run_id 统一
+### Task 10: Stage Records
 
 **Files:**
-- Modify: `runner/mcp_server.py` — `_handle_run`
+- Modify: `core/state_manager.py`
+- Modify: `core/engine.py`
+- Create: `tests/test_stage_records.py`
 
-将前面的修复集成到 MCP 入口：执行前检查 readiness，选择正确的默认 runtime，传递 run_id。
+- [ ] **Step 1: Write the failing test**
 
-- [ ] **Step 1: Write the integration test**
+```python
+# tests/test_stage_records.py
+import asyncio
+import json
+import shutil
+from pathlib import Path
+from reqflow.core.engine import Engine, StepResult
+from reqflow.core.runtime_config import RuntimeConfig
+
+
+def test_state_records_stage_details():
+    """state.json should contain stage_records with per-stage status."""
+    config = RuntimeConfig(name="manual", display_name="Manual")
+    engine = Engine(config=config, run_dir="/tmp/test-stage-records")
+
+    async def mock_run_step(step, context=None):
+        return StepResult(name=step["name"], status="success", duration_ms=100)
+
+    engine.run_step = mock_run_step
+    steps = [{"name": "step1", "prompt": "first"}, {"name": "step2", "prompt": "second"}]
+
+    asyncio.run(engine.run_workflow(workflow_steps=steps, requirement="test"))
+
+    state = json.loads((Path("/tmp/test-stage-records") / "state.json").read_text())
+    assert "stage_records" in state
+    assert len(state["stage_records"]) == 2
+    assert state["stage_records"][0]["name"] == "step1"
+    assert state["stage_records"][0]["status"] == "success"
+
+    shutil.rmtree("/tmp/test-stage-records", ignore_errors=True)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_stage_records.py -v`
+Expected: FAIL — stage_records not in RunState
+
+- [ ] **Step 3: Add stage_records to RunState**
+
+In `core/state_manager.py`, add to `RunState` dataclass:
+
+```python
+    stage_records: list[dict[str, Any]] = field(default_factory=list)
+```
+
+- [ ] **Step 4: Record stage details in engine**
+
+In `core/engine.py`, in `run_workflow`, after `completed_steps.append(...)` (around line 154), add:
+
+```python
+                self.state_manager.state.stage_records.append({
+                    "name": step["name"],
+                    "status": step_result.status,
+                    "duration_ms": step_result.duration_ms,
+                    "error": step_result.error,
+                })
+```
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_stage_records.py -v`
+Expected: PASS
+
+- [ ] **Step 6: Run all tests**
+
+Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/ -v`
+Expected: All pass
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add core/state_manager.py core/engine.py tests/test_stage_records.py
+git commit -m "feat: record per-stage details in state.json stage_records"
+```
+
+---
+
+### Task 11: MCP reqflow_run 集成
+
+**Files:**
+- Modify: `runner/mcp_server.py`
+- Create: `tests/test_mcp_run_integration.py`
+
+- [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_mcp_run_integration.py
 import os
 import asyncio
-import pytest
 from reqflow.runner.mcp_server import _handle_run
 
 
@@ -1122,13 +1115,10 @@ def test_mcp_run_fails_fast_on_missing_api_key():
     """MCP reqflow_run should fail fast when API key is missing."""
     old_key = os.environ.pop("OPENAI_API_KEY", None)
     try:
-        result = asyncio.run(_handle_run({
-            "requirement": "test requirement",
-            "runtime": "gpt",
-        }))
+        result = asyncio.run(_handle_run({"requirement": "test", "runtime": "gpt"}))
         text = result[0].text
         assert "错误" in text or "error" in text.lower() or "未配置" in text
-        assert "401" not in text  # Should not get to API call
+        assert "401" not in text
     finally:
         if old_key:
             os.environ["OPENAI_API_KEY"] = old_key
@@ -1136,11 +1126,8 @@ def test_mcp_run_fails_fast_on_missing_api_key():
 
 def test_mcp_run_default_uses_host():
     """MCP reqflow_run without runtime should prefer host."""
-    result = asyncio.run(_handle_run({
-        "requirement": "test requirement",
-    }))
+    result = asyncio.run(_handle_run({"requirement": "test"}))
     text = result[0].text
-    # Should use host or manual, not gpt
     assert "gpt" not in text.lower() or "host" in text.lower() or "manual" in text.lower()
 ```
 
@@ -1149,76 +1136,25 @@ def test_mcp_run_default_uses_host():
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_mcp_run_integration.py -v`
 Expected: FAIL
 
-- [ ] **Step 3: Fix _handle_run in mcp_server.py**
+- [ ] **Step 3: Fix _handle_run**
 
-修改 `_handle_run` 函数：
+In `runner/mcp_server.py`, in `_handle_run`, after `config = registry.get(runtime_name)` (line ~318), add readiness check:
 
 ```python
-async def _handle_run(arguments: dict) -> list:
-    """处理 reqflow_run 工具调用。"""
-    Engine, RuntimeRegistry = _import_core()
-
-    requirement = arguments.get("requirement", "").strip()
-    if not requirement:
-        return [TextContent(type="text", text="[错误] 需求内容不能为空。")]
-
-    runtime_name = arguments.get("runtime")
-    workflow_type = arguments.get("workflow", "flow")
-    run_dir = arguments.get("run_dir")
-
-    # 选择 runtime
-    try:
-        registry = RuntimeRegistry()
-    except Exception as exc:
-        return [TextContent(type="text", text=f"[错误] 无法加载 runtime 配置: {exc}")]
-
-    if runtime_name:
-        try:
-            config = registry.get(runtime_name)
-        except ValueError as exc:
-            return [TextContent(type="text", text=f"[错误] {exc}")]
-
-        # Readiness check — fail fast if runtime not ready
         ready, reason = registry.check_readiness(runtime_name)
         if not ready:
             return [TextContent(type="text", text=f"[错误] Runtime '{runtime_name}' 不可用: {reason}")]
-    else:
-        config = _detect_runtime(registry)
-        if config is None:
-            return [TextContent(type="text", text="[错误] 无法自动检测 runtime，请指定 runtime 参数。")]
+```
 
-    # 选择 workflow（从 YAML 加载）
-    steps = _get_workflow_steps(workflow_type)
+Also update the output section to show step status icons and failed_at:
 
-    # 创建 Engine 并执行
-    engine = Engine(config=config, run_dir=run_dir)
-
-    try:
-        result = await engine.run_workflow(workflow_steps=steps, requirement=requirement)
-    except Exception as exc:
-        return [TextContent(type="text", text=f"[错误] Workflow 执行失败: {exc}")]
-
-    # 格式化输出
-    lines = [
-        f"运行 ID: {engine.run_id}",
-        f"Runtime: {config.display_name} ({config.name})",
-        f"状态: {result.get('status', '未知')}",
-    ]
-
+```python
     for step in result.get("steps", []):
-        status_icon = {"success": "[OK]", "failed": "[FAIL]", "skipped": "[SKIP]", "aborted": "[STOP]"}.get(step.get("status", ""), "[?]")
-        lines.append(f"  {status_icon} {step.get('name', '?')}: {step.get('status', '?')}")
+        icon = {"success": "[OK]", "failed": "[FAIL]", "skipped": "[SKIP]", "aborted": "[STOP]"}.get(step.get("status", ""), "[?]")
+        lines.append(f"  {icon} {step.get('name', '?')}: {step.get('status', '?')}")
 
-    if result.get("error"):
-        lines.append(f"错误: {result['error']}")
-    if result.get("abort_reason"):
-        lines.append(f"中止原因: {result['abort_reason']}")
     if result.get("failed_at"):
         lines.append(f"失败阶段: {result['failed_at']}")
-
-    lines.append(f"运行目录: {engine.run_dir}")
-
-    return [TextContent(type="text", text="\n".join(lines))]
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -1230,18 +1166,16 @@ Expected: PASS
 
 ```bash
 git add runner/mcp_server.py tests/test_mcp_run_integration.py
-git commit -m "fix: MCP reqflow_run does readiness check and fail-fast on missing config"
+git commit -m "fix: MCP reqflow_run does readiness check and fail-fast"
 ```
 
 ---
 
-### Task 11: Host Task CLI Fallback
+### Task 12: Host Task CLI Fallback
 
 **Files:**
 - Create: `runner/host_task.py`
-- Modify: `runner/cli.py` — 添加 host-task 子命令
-
-为不支持 MCP 的 agent 提供 CLI fallback：通过文件协议获取 task、提交 result。
+- Create: `tests/test_host_task_cli.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1255,14 +1189,11 @@ from reqflow.runner.host_task import get_next_task, submit_result, get_status
 
 
 def test_get_next_task_returns_packet():
-    """get_next_task should return the task packet from task.json."""
     run_dir = "/tmp/test-host-task-cli"
     os.makedirs(run_dir, exist_ok=True)
-
     try:
         task = {"stage_id": "s1", "prompt": "do something"}
         (Path(run_dir) / "task.json").write_text(json.dumps(task))
-
         result = get_next_task(run_dir)
         assert result is not None
         assert result["stage_id"] == "s1"
@@ -1271,10 +1202,8 @@ def test_get_next_task_returns_packet():
 
 
 def test_get_next_task_returns_none_when_no_task():
-    """get_next_task should return None when no task.json exists."""
     run_dir = "/tmp/test-host-task-no-task"
     os.makedirs(run_dir, exist_ok=True)
-
     try:
         result = get_next_task(run_dir)
         assert result is None
@@ -1283,18 +1212,14 @@ def test_get_next_task_returns_none_when_no_task():
 
 
 def test_submit_result_writes_result_json():
-    """submit_result should write result.json to run_dir."""
     run_dir = "/tmp/test-host-task-submit"
     os.makedirs(run_dir, exist_ok=True)
-
     try:
         result_data = {"status": "success", "summary": "done"}
         result_file = Path(run_dir) / "input-result.json"
         result_file.write_text(json.dumps(result_data))
-
         output = submit_result(run_dir, str(result_file))
         assert output["status"] == "ok"
-
         written = json.loads((Path(run_dir) / "result.json").read_text())
         assert written["status"] == "success"
     finally:
@@ -1302,14 +1227,11 @@ def test_submit_result_writes_result_json():
 
 
 def test_get_status_reads_state():
-    """get_status should return state.json contents."""
     run_dir = "/tmp/test-host-task-status"
     os.makedirs(run_dir, exist_ok=True)
-
     try:
         state = {"run_id": "test", "current_stage": "s1", "completed_modules": []}
         (Path(run_dir) / "state.json").write_text(json.dumps(state))
-
         status = get_status(run_dir)
         assert status["run_id"] == "test"
     finally:
@@ -1319,18 +1241,18 @@ def test_get_status_reads_state():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_host_task_cli.py -v`
-Expected: FAIL (host_task.py doesn't exist)
+Expected: FAIL — host_task.py doesn't exist
 
 - [ ] **Step 3: Implement host_task.py**
 
+Create `runner/host_task.py`:
+
 ```python
-# runner/host_task.py
 """CLI fallback for host agent interaction via file protocol."""
 
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 
@@ -1350,7 +1272,6 @@ def submit_result(run_dir: str, result_path: str) -> dict:
     result_file = Path(result_path)
     if not result_file.exists():
         return {"status": "error", "error": f"Result file not found: {result_path}"}
-
     try:
         data = json.loads(result_file.read_text())
     except (json.JSONDecodeError, OSError) as e:
@@ -1358,7 +1279,6 @@ def submit_result(run_dir: str, result_path: str) -> dict:
 
     dest = Path(run_dir) / "result.json"
     dest.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-
     return {"status": "ok", "written_to": str(dest)}
 
 
@@ -1382,120 +1302,24 @@ Expected: PASS
 
 ```bash
 git add runner/host_task.py tests/test_host_task_cli.py
-git commit -m "feat: add host task CLI fallback for file-protocol agent interaction"
-```
-
----
-
-### Task 12: 阶段产物检查 — state.json 记录 stage_records
-
-**Files:**
-- Modify: `core/engine.py` — run_workflow 中记录每阶段详情
-- Modify: `core/state_manager.py` — RunState 添加 stage_records
-- Create: `tests/test_stage_records.py`
-
-当前 state.json 只记录 completed_modules 列表，不记录每阶段的状态、耗时、错误。需要记录 stage_records。
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-# tests/test_stage_records.py
-import asyncio
-import shutil
-from reqflow.core.engine import Engine, StepResult
-from reqflow.core.runtime_config import RuntimeConfig
-
-
-def test_state_records_stage_details():
-    """state.json should contain stage_records with per-stage status."""
-    config = RuntimeConfig(name="manual", display_name="Manual")
-    engine = Engine(config=config, run_dir="/tmp/test-stage-records")
-
-    # Monkey-patch run_step
-    async def mock_run_step(step, context=None):
-        return StepResult(name=step["name"], status="success", duration_ms=100)
-
-    engine.run_step = mock_run_step
-
-    steps = [
-        {"name": "step1", "prompt": "first"},
-        {"name": "step2", "prompt": "second"},
-    ]
-
-    result = asyncio.run(engine.run_workflow(workflow_steps=steps, requirement="test"))
-
-    # Check state.json has stage_records
-    import json
-    from pathlib import Path
-    state = json.loads((Path("/tmp/test-stage-records") / "state.json").read_text())
-
-    assert "stage_records" in state
-    assert len(state["stage_records"]) == 2
-    assert state["stage_records"][0]["name"] == "step1"
-    assert state["stage_records"][0]["status"] == "success"
-
-    shutil.rmtree("/tmp/test-stage-records", ignore_errors=True)
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_stage_records.py -v`
-Expected: FAIL (stage_records not in state)
-
-- [ ] **Step 3: Add stage_records to RunState**
-
-在 `core/state_manager.py` 的 `RunState` dataclass 中添加：
-
-```python
-    stage_records: list[dict[str, Any]] = field(default_factory=list)
-```
-
-- [ ] **Step 4: Record stage details in engine**
-
-在 `core/engine.py` 的 `run_workflow` 中，每步执行后记录：
-
-```python
-                # Record stage details
-                self.state_manager.state.stage_records.append({
-                    "name": step["name"],
-                    "status": step_result.status,
-                    "duration_ms": step_result.duration_ms,
-                    "error": step_result.error,
-                })
-```
-
-- [ ] **Step 5: Run test to verify it passes**
-
-Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/test_stage_records.py -v`
-Expected: PASS
-
-- [ ] **Step 6: Run all tests**
-
-Run: `cd /Users/yuanjulong/Documents/ai_flow/reqflow && python -m pytest tests/ -v`
-Expected: All pass
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add core/engine.py core/state_manager.py tests/test_stage_records.py
-git commit -m "feat: record per-stage details in state.json stage_records"
+git commit -m "feat: add host task CLI fallback for file-protocol interaction"
 ```
 
 ---
 
 ## Self-Review Checklist
 
-| Issue | Covered by Task |
-|-------|----------------|
+| Spec Requirement | Task |
+|---|---|
 | 1. gpt runtime 假成功 | Task 1 (API adapter raise) |
 | 2. Dashboard 状态误导 | Task 8 (dashboard real status) |
-| 3. 缺少 runtime 鉴权前置检查 | Task 3 (readiness check) |
-| 4. skill 默认不应走第三方 API | Task 4 (default runtime) |
-| 5. host-codex 超时 | Task 7 (host adapter with timeout) |
+| 3. 缺少 runtime 鉴权前置检查 | Task 4 (readiness check) |
+| 4. skill 默认不应走第三方 API | Task 5 (default runtime) |
+| 5. host-codex 超时 | Task 7 (host adapter) |
 | 6. 超时后缺恢复信息 | Task 7 (host adapter blocked message) |
 | 7. run id 不一致 | Task 9 (run id unify) |
-| 8. 没有阶段文档 | Task 12 (stage_records) |
+| 8. 没有阶段文档 | Task 10 (stage_records) |
 | 9. Agent Execution 没真实执行 | Task 7 (host adapter) |
 | 10. 阶段失败没阻断 | Task 2 (fail-fast) |
 | 11. 交付状态不可信 | Task 2 + Task 8 |
-| 12. health 语义混淆 | Task 5 (health enhancement) |
+| 12. health 语义混淆 | Task 6 (health enhancement) |
