@@ -1475,36 +1475,6 @@ async def _handle_git_check(arguments: dict) -> list:
     return [TextContent(type="text", text="\n".join(lines))]
 
 
-TOOL_HANDLERS = {
-    "reqflow_run": _handle_run,
-    "reqflow_status": _handle_status,
-    "reqflow_list_runtimes": _handle_list_runtimes,
-    "reqflow_run_graph": _handle_run_graph,
-    "reqflow_session_save": _handle_session_save,
-    "reqflow_session_load": _handle_session_load,
-    "reqflow_dashboard": _handle_dashboard,
-    "reqflow_checkpoint": _handle_checkpoint,
-    "reqflow_parallel": _handle_parallel,
-    "reqflow_trace": _handle_trace,
-    "reqflow_guardrails": _handle_guardrails,
-    "reqflow_health": _handle_health,
-    # --- Harness 编排工具 ---
-    "reqflow_plan": _handle_plan,
-    "reqflow_report": _handle_report,
-    "reqflow_verify": _handle_verify,
-    "reqflow_accept": _handle_accept,
-    "reqflow_reject": _handle_reject,
-    # --- V3 新增工具 ---
-    "reqflow_tool_call": _handle_tool_call,
-    "reqflow_memory_save": _handle_memory_save,
-    "reqflow_memory_load": _handle_memory_load,
-    "reqflow_git_check": _handle_git_check,
-    # --- V3 BLOCKER 和多仓库工具 ---
-    "reqflow_blocker_add": _handle_blocker_add,
-    "reqflow_blocker_resolve": _handle_blocker_resolve,
-    "reqflow_blocker_check": _handle_blocker_check,
-    "reqflow_multi_repo_switch": _handle_multi_repo_switch,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -1533,6 +1503,9 @@ def _detect_runtime(registry) -> object | None:
 
 async def _handle_blocker_add(arguments: dict) -> list:
     """处理 reqflow_blocker_add 工具调用。"""
+    import json as _json
+    from pathlib import Path as _Path
+
     run_id = arguments.get("run_id", "")
     level = arguments.get("level", "P0")
     question = arguments.get("question", "")
@@ -1544,15 +1517,36 @@ async def _handle_blocker_add(arguments: dict) -> list:
     from reqflow.core.blocker_manager import BlockerManager, BlockerLevel
     bm = BlockerManager()
 
+    # Load existing blockers from state file
+    state_path = _Path(f".dev-workflow/runs/{run_id}/state.json")
+    if state_path.exists():
+        with open(state_path) as f:
+            state = _json.load(f)
+        bm.load_from_list(state.get("blockers", []))
+
     level_map = {"P0": BlockerLevel.P0, "P1": BlockerLevel.P1, "P2": BlockerLevel.P2}
     blocker_level = level_map.get(level, BlockerLevel.P0)
 
     blocker = bm.add(blocker_level, question, stage)
+
+    # Save back to state file
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state = {}
+    if state_path.exists():
+        with open(state_path) as f:
+            state = _json.load(f)
+    state["blockers"] = bm.to_list()
+    with open(state_path, "w") as f:
+        _json.dump(state, f, indent=2)
+
     return [TextContent(type="text", text=f"BLOCKER 已添加: [{blocker.level.value}] {blocker.id} — {blocker.question}")]
 
 
 async def _handle_blocker_resolve(arguments: dict) -> list:
     """处理 reqflow_blocker_resolve 工具调用。"""
+    import json as _json
+    from pathlib import Path as _Path
+
     run_id = arguments.get("run_id", "")
     blocker_id = arguments.get("blocker_id", "")
     answer = arguments.get("answer", "")
@@ -1563,9 +1557,24 @@ async def _handle_blocker_resolve(arguments: dict) -> list:
     from reqflow.core.blocker_manager import BlockerManager
     bm = BlockerManager()
 
+    # Load existing blockers
+    state_path = _Path(f".dev-workflow/runs/{run_id}/state.json")
+    if state_path.exists():
+        with open(state_path) as f:
+            state = _json.load(f)
+        bm.load_from_list(state.get("blockers", []))
+
     try:
         success = bm.resolve(blocker_id, answer)
         if success:
+            # Save back
+            state = {}
+            if state_path.exists():
+                with open(state_path) as f:
+                    state = _json.load(f)
+            state["blockers"] = bm.to_list()
+            with open(state_path, "w") as f:
+                _json.dump(state, f, indent=2)
             return [TextContent(type="text", text=f"BLOCKER 已解决: {blocker_id} — {answer}")]
         else:
             return [TextContent(type="text", text=f"[错误] BLOCKER {blocker_id} 未找到")]
@@ -1575,6 +1584,9 @@ async def _handle_blocker_resolve(arguments: dict) -> list:
 
 async def _handle_blocker_check(arguments: dict) -> list:
     """处理 reqflow_blocker_check 工具调用。"""
+    import json as _json
+    from pathlib import Path as _Path
+
     run_id = arguments.get("run_id", "")
     stage = arguments.get("stage", "")
 
@@ -1583,6 +1595,13 @@ async def _handle_blocker_check(arguments: dict) -> list:
 
     from reqflow.core.blocker_manager import BlockerManager
     bm = BlockerManager()
+
+    # Load existing blockers
+    state_path = _Path(f".dev-workflow/runs/{run_id}/state.json")
+    if state_path.exists():
+        with open(state_path) as f:
+            state = _json.load(f)
+        bm.load_from_list(state.get("blockers", []))
 
     open_p0 = bm.get_open_p0()
     all_blockers = bm.to_list()
@@ -1677,6 +1696,39 @@ def main() -> None:
         sys.exit(1)
 
     asyncio.run(_run_server())
+
+
+
+TOOL_HANDLERS = {
+    "reqflow_run": _handle_run,
+    "reqflow_status": _handle_status,
+    "reqflow_list_runtimes": _handle_list_runtimes,
+    "reqflow_run_graph": _handle_run_graph,
+    "reqflow_session_save": _handle_session_save,
+    "reqflow_session_load": _handle_session_load,
+    "reqflow_dashboard": _handle_dashboard,
+    "reqflow_checkpoint": _handle_checkpoint,
+    "reqflow_parallel": _handle_parallel,
+    "reqflow_trace": _handle_trace,
+    "reqflow_guardrails": _handle_guardrails,
+    "reqflow_health": _handle_health,
+    # --- Harness 编排工具 ---
+    "reqflow_plan": _handle_plan,
+    "reqflow_report": _handle_report,
+    "reqflow_verify": _handle_verify,
+    "reqflow_accept": _handle_accept,
+    "reqflow_reject": _handle_reject,
+    # --- V3 新增工具 ---
+    "reqflow_tool_call": _handle_tool_call,
+    "reqflow_memory_save": _handle_memory_save,
+    "reqflow_memory_load": _handle_memory_load,
+    "reqflow_git_check": _handle_git_check,
+    # --- V3 BLOCKER 和多仓库工具 ---
+    "reqflow_blocker_add": _handle_blocker_add,
+    "reqflow_blocker_resolve": _handle_blocker_resolve,
+    "reqflow_blocker_check": _handle_blocker_check,
+    "reqflow_multi_repo_switch": _handle_multi_repo_switch,
+}
 
 
 if __name__ == "__main__":

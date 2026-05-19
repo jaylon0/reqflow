@@ -594,11 +594,11 @@ def _stage_tech_plan(index, name, routing, structure, context_info, work_items):
 
 
 def _stage_coding(index, name, routing, structure, context_info, work_items):
-    """生成代码阶段 — 模块级 7 步循环（V3）。"""
+    """生成代码阶段 — 模块级 8 步循环（V3）。"""
     lines = [
-        f"## 阶段 {index}: {name}（模块级 7 步循环）",
+        f"## 阶段 {index}: {name}（模块级 8 步循环）",
         "",
-        "对每个模块执行以下 7 步循环：",
+        "对每个模块执行以下 8 步循环：",
         "",
         "### 模块: <module-name>",
         "",

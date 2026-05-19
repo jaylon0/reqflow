@@ -1,4 +1,4 @@
-"""ReqFlow Module Loop — 模块级 7 步循环。
+"""ReqFlow Module Loop — 模块级 8 步循环。
 
 每个模块执行：准备→建组件→生成→验收自检→Review→人确认→提交→更新state
 """
@@ -49,14 +49,15 @@ class ModuleResult:
 
     @property
     def all_done(self) -> bool:
-        required = {ModuleStep.PREPARE, ModuleStep.GENERATE, ModuleStep.SELF_CHECK,
-                    ModuleStep.REVIEW, ModuleStep.HUMAN_CONFIRM, ModuleStep.COMMIT, ModuleStep.UPDATE_STATE}
+        required = {ModuleStep.PREPARE, ModuleStep.BUILD_COMPONENTS, ModuleStep.GENERATE,
+                    ModuleStep.SELF_CHECK, ModuleStep.REVIEW, ModuleStep.HUMAN_CONFIRM,
+                    ModuleStep.COMMIT, ModuleStep.UPDATE_STATE}
         return required.issubset(set(self.completed_steps))
 
 
 class ModuleLoop:
-    """模块级 7 步循环。核心规则：
-    - 每个模块必须走完 7 步
+    """模块级 8 步循环。核心规则：
+    - 每个模块必须走完 8 步
     - Review +1 确认后才开启下一个模块
     - 禁止修改无关逻辑
     - 已完成模块禁止重新生成
@@ -68,7 +69,7 @@ class ModuleLoop:
         self._current_result: ModuleResult | None = None
 
     def start_module(self, module_name: str) -> ModuleResult:
-        """开始一个模块的 7 步循环。"""
+        """开始一个模块的 8 步循环。"""
         if module_name in self._completed_modules:
             logger.warning("模块 %s 已完成，禁止重新生成", module_name)
             return ModuleResult(module_name=module_name, status="failed",
@@ -116,6 +117,13 @@ class ModuleLoop:
         self._current_module = None
         self._current_result = None
         return result
+
+    @property
+    def all_done(self) -> bool:
+        """检查当前模块是否完成所有步骤。"""
+        if not self._current_result:
+            return False
+        return self._current_result.all_done
 
     def should_proceed(self, module_result: ModuleResult) -> bool:
         """检查是否可以进入下一个模块。"""
