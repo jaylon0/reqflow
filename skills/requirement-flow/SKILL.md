@@ -126,18 +126,31 @@ reqflow_verify(run_id="<run-id>", gate="design-gate", evidence={...})
 
 | 工具 | 用途 |
 |------|------|
+| `reqflow_run` | 执行 workflow |
+| `reqflow_status` | 查询运行状态 |
+| `reqflow_list_runtimes` | 列出可用 runtime |
+| `reqflow_run_graph` | 执行图编排 |
+| `reqflow_session_save` | 保存会话 |
+| `reqflow_session_load` | 加载会话 |
+| `reqflow_dashboard` | Dashboard 可视化 |
+| `reqflow_checkpoint` | 管理检查点 |
+| `reqflow_parallel` | 并行 agent 调度 |
+| `reqflow_trace` | 执行追踪 |
+| `reqflow_guardrails` | 约束检查 |
+| `reqflow_health` | 健康检查 |
 | `reqflow_plan` | 开始新计划 |
 | `reqflow_report` | 报告阶段完成 |
 | `reqflow_verify` | 门禁验证 |
 | `reqflow_accept` | 用户验收通过 |
 | `reqflow_reject` | 用户验收拒绝 |
-| `reqflow_status` | 查询状态 |
-| `reqflow_blocker_add` | 添加 BLOCKER |
-| `reqflow_blocker_resolve` | 解决 BLOCKER |
 | `reqflow_tool_call` | 调用外部工具 |
 | `reqflow_memory_save` | 保存长期记忆 |
 | `reqflow_memory_load` | 加载长期记忆 |
 | `reqflow_git_check` | 检查 Git 状态 |
+| `reqflow_blocker_add` | 添加 BLOCKER |
+| `reqflow_blocker_resolve` | 解决 BLOCKER |
+| `reqflow_blocker_check` | 检查 BLOCKER 状态 |
+| `reqflow_multi_repo_switch` | 多仓库切换 |
 
 ## 相关 Skills
 

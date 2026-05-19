@@ -51,10 +51,10 @@ Execution Skill 头部定义了入口点（entry_point）：
 
 ## 模块循环
 
-每个模块按 7 步循环执行：
+每个模块按 8 步循环执行：
 
 ```
-prepare → build → generate → self_check → review → confirm → commit
+prepare → build → generate → self_check → review → confirm → commit → update_state
 ```
 
 使用 `reqflow_report` 报告每个步骤的状态。
