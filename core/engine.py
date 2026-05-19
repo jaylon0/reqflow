@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 
 from dataclasses import dataclass, field
@@ -22,6 +23,11 @@ from .state_manager import StateManager, RunState
 from .tracer import Tracer, TokenUsage as TracerTokenUsage
 from .guardrails import Guardrails, Constraint, Violation, Severity
 from .workflow_loader import WorkflowLoader
+from .hook_executor import HookExecutor
+from .agent_coordinator import AgentCoordinator
+from .loop_engine import LoopEngine
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,6 +62,9 @@ class Engine:
 
         self._adapter: ModelAdapter | None = None
         self._step_results: dict[str, StepResult] = {}
+        self._hook_executor = HookExecutor()
+        self._agent_coordinator: AgentCoordinator | None = None
+        self._loop_engine_instance: LoopEngine | None = None
 
     # --- Adapter selection ---
 
@@ -219,6 +228,13 @@ class Engine:
 
         return final_result
 
+    async def _execute_stage_hooks(self, stage_def, context, trigger):
+        hook_names = stage_def.get("knowledge_hooks", [])
+        if not hook_names:
+            return {"status": "ok", "output": "No hooks defined"}
+        stage_name = stage_def.get("name", "unknown")
+        return await self._hook_executor.execute_hooks(hook_names, stage_name, context, trigger)
+
     async def run_workflow_by_name(
         self,
         workflow_name: str,
@@ -256,6 +272,24 @@ class Engine:
                 existing = engine_stage.get("constraints", [])
                 engine_stage["constraints"] = existing + gate_constraints
 
+        # Preserve knowledge_hooks in engine steps from yaml_stages
+        for yaml_stage, engine_stage in zip(yaml_stages, stages):
+            knowledge_hooks = yaml_stage.get("knowledge_hooks")
+            if knowledge_hooks:
+                engine_stage["knowledge_hooks"] = knowledge_hooks
+
+        # Load agent coordination if defined
+        for yaml_stage in yaml_stages:
+            agent_coord = yaml_stage.get("agent_coordination")
+            if agent_coord:
+                self._agent_coordinator = AgentCoordinator(config=agent_coord)
+                break
+
+        # Load loop engine if defined
+        loop_engine_config = definition.get("loop_engine")
+        if loop_engine_config:
+            self._loop_engine_instance = LoopEngine(config=loop_engine_config)
+
         # Store loop_engine config so _execute_step_with_loop can resolve it
         self._current_loop_engine = definition.get("loop_engine")
 
@@ -263,6 +297,8 @@ class Engine:
             return await self.run_workflow(stages, requirement)
         finally:
             self._current_loop_engine = None
+            self._agent_coordinator = None
+            self._loop_engine_instance = None
 
     async def run_dag_workflow(
         self, workflow_name: str, requirement: str
@@ -664,6 +700,13 @@ class Engine:
                     duration_ms=duration,
                 )
 
+            # Execute before_stage hooks if knowledge_hooks defined
+            if step.get("knowledge_hooks"):
+                try:
+                    await self._execute_stage_hooks(step, context or {}, "before_stage")
+                except Exception as hook_err:
+                    logger.warning("Before-stage hook failed for '%s': %s", step_name, hook_err)
+
             # Call adapter
             adapter = self.select_adapter()
             system_prompt = self.context_adapter.format_system_prompt(step_name)
@@ -685,6 +728,13 @@ class Engine:
                     step_status = "blocked"
                 elif "[TIMEOUT]" in response.content:
                     step_status = "timeout"
+
+            # Execute after_stage hooks if knowledge_hooks defined
+            if step.get("knowledge_hooks"):
+                try:
+                    await self._execute_stage_hooks(step, context or {}, "after_stage")
+                except Exception as hook_err:
+                    logger.warning("After-stage hook failed for '%s': %s", step_name, hook_err)
 
             # Record trace
             tokens = TracerTokenUsage(

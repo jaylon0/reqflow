@@ -284,10 +284,11 @@ class WorkflowLoader:
         if constraints:
             step["constraints"] = constraints
 
-        # knowledge_hooks -> merge into prompt as context hints
+        # knowledge_hooks -> merge into prompt as context hints and preserve list
         knowledge_hooks = stage.get("knowledge_hooks")
         if knowledge_hooks:
             step["prompt"] = self._merge_knowledge_hooks(step["prompt"], knowledge_hooks)
+            step["knowledge_hooks"] = knowledge_hooks
 
         # context (pass through arbitrary context keys)
         if "context" in stage:
