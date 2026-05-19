@@ -24,3 +24,6 @@ docs/
 .env
 .env.local
 *.log
+
+# Claude Code
+CLAUDE.md
