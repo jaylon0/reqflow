@@ -1,0 +1,28 @@
+# ReqFlow 外部工具配置
+# 通过 MCP 协议连接外部工具
+
+tools:
+  docs-shuttle:
+    description: "文档同步查阅"
+    type: "mcp_server"
+    command: "docs-shuttle"
+
+  common-components:
+    description: "重用组件查询"
+    type: "mcp_server"
+    command: "common-components"
+
+  coding-standards:
+    description: "编码规范检查"
+    type: "skill"
+    path: "skills/coding-standards"
+
+  pitfall:
+    description: "常见坑检查"
+    type: "skill"
+    path: "skills/pitfall"
+
+  commit-msg:
+    description: "提交信息规范"
+    type: "skill"
+    path: "skills/commit-msg"

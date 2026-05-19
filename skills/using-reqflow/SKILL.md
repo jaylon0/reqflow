@@ -1,11 +1,24 @@
 ---
 name: using-reqflow
-description: Use when the user provides a requirement, PRD, issue, bug, or feature request - guides the full workflow from requirements analysis to code delivery
+description: >
+  ReqFlow Harness 使用指南。从需求到交付的完整工程化流程。
+  Harness 模式：生成 Execution Skill，Agent 按剧本执行。
+  V3: 集成 BLOCKER 管理、上下文保护、模块循环、长期记忆、Git 工作流。
 ---
 
 # using-reqflow
 
-ReqFlow 主流程入口。引导用户完成从需求到交付的全流程。
+ReqFlow Harness 使用指南。引导用户完成从需求到交付的全流程。
+
+## 核心理念
+
+**Harness 生成剧本，Agent 执行演出。**
+
+ReqFlow 是一个 Harness（编排器），它：
+1. 分析需求，决定路由级别
+2. 扫描项目上下文
+3. 生成 Execution Skill（执行剧本）
+4. Agent 按剧本执行，通过 MCP 工具回报状态
 
 ## 触发方式
 
@@ -21,68 +34,110 @@ ReqFlow 主流程入口。引导用户完成从需求到交付的全流程。
 
 ## 流程
 
-### 1. 项目上下文扫描
+### 1. 创建计划
 
-首先了解项目结构和上下文：
-
+调用 `reqflow_plan` 开始新计划：
 ```
-读取项目根目录的文件结构，了解：
-- 项目类型（Java/Python/Node.js 等）
-- 构建工具（Maven/Gradle/npm 等）
-- 测试框架
-- 代码规范
+reqflow_plan(requirement="<需求描述>")
 ```
 
-### 2. 需求分析
+Harness 会自动：
+- 路由分析（L0/L1/L2/L3）
+- 入口点检测（prd/tech_plan/resume）
+- 上下文扫描（项目结构、技术栈、入口文件）
+- 生成 Execution Skill（执行剧本）
 
-分析用户需求，确定：
-- 需求类型（新功能/bug 修复/重构/分析）
-- 复杂度级别（L0-L3）
-- 涉及的模块和文件
-
-### 3. 工作流选择
-
-根据需求复杂度选择工作流：
-
-| 级别 | 工作流 | 说明 |
-|------|--------|------|
-| L0 | 直接分析 | 只读分析，不修改代码 |
-| L1 | flow | 快速 3 阶段：分析→实现→验证 |
-| L2 | main-flow | 完整 10 阶段 PRD→代码流程 |
-| L3 | graph-flow | 图编排，支持分支和循环 |
-
-### 4. 执行工作流
-
-调用 MCP 工具执行选定的工作流：
+### 2. 读取 Execution Skill
 
 ```
-调用 reqflow_run 或 reqflow_run_graph 执行工作流
+cat .dev-workflow/runs/<run-id>/exec-skill.md
 ```
 
-### 5. 结果验证
+Execution Skill 定义了：
+- 全局约束（BLOCKER 管理、上下文保护、Git 工作流）
+- 入口点（prd/tech_plan/resume）
+- 各阶段的具体任务
+- MCP 工具使用指南
+- 门禁检查点
+- 暂停条件
 
-检查执行结果：
-- 代码变更是否正确
-- 测试是否通过
-- 是否满足需求
+### 3. 按阶段执行
 
-### 6. 交付报告
+按 Execution Skill 定义的阶段顺序执行：
 
-调用 reqflow_dashboard 生成运行面板，展示：
-- 执行状态
-- 各步骤结果
-- Checkpoint 信息
-- 耗时统计
+| 阶段 | 任务 | 门禁 |
+|------|------|------|
+| 上下文理解 | 项目扫描、语义分析、完备性检查 | — |
+| 设计 | Meta Spec、Feature Spec、技术方案 | design-gate |
+| 实现计划 | 工作项分解、TDD 计划 | tdd-gate |
+| 实现 | 编码、测试、重构 | — |
+| 代码审查 | Spec 合规、代码质量 | completion-gate |
+| 交付验证 | 构建、测试、合规报告 | compliance-report |
+| 归档 | 用户验收、经验教训 | — |
 
-## 可用能力
+每个阶段完成后调用 `reqflow_report` 报告状态。
 
-| 能力 | MCP 工具 | 说明 |
-|------|----------|------|
-| 线性工作流 | reqflow_run | 执行 flow/main-flow |
-| 图编排 | reqflow_run_graph | 执行图工作流 |
-| 会话持久化 | reqflow_session_save/load | 跨轮次状态 |
-| Checkpoint | reqflow_checkpoint | 检查点管理 |
-| 并行调度 | reqflow_parallel | 并行 agent |
-| Trace | reqflow_trace | 执行追踪 |
-| 约束检查 | reqflow_guardrails | 规则验证 |
-| 面板 | reqflow_dashboard | 运行面板 |
+### 4. BLOCKER 管理
+
+每个阶段可能产生 BLOCKER：
+
+| 级别 | 含义 | 处理方式 |
+|------|------|----------|
+| P0 | 阻塞，必须关闭 | 所有 P0 关闭前不得进入下一阶段 |
+| P1 | 标记，不阻塞 | 记录并在后续阶段处理 |
+| P2 | 仅记录 | 仅记录，不影响流程 |
+
+使用 `reqflow_blocker_add` 添加，`reqflow_blocker_resolve` 解决。
+
+### 5. 门禁检查
+
+需要门禁检查时调用 `reqflow_verify`：
+```
+reqflow_verify(run_id="<run-id>", gate="design-gate", evidence={...})
+```
+
+### 6. 长期记忆
+
+使用 `reqflow_memory_save` 保存重要决策和约束：
+```
+reqflow_memory_save(
+    category="decision",
+    key="使用 PostgreSQL 而非 MySQL",
+    content="因为需要 JSONB 支持",
+    run_id="<run-id>"
+)
+```
+
+使用 `reqflow_memory_load` 加载历史记忆。
+
+### 7. 用户验收
+
+完成所有阶段后，等待用户验收：
+- 用户通过: `reqflow_accept(run_id="<run-id>")`
+- 用户拒绝: `reqflow_reject(run_id="<run-id>", reason="...")`
+
+## MCP 工具
+
+| 工具 | 用途 |
+|------|------|
+| `reqflow_plan` | 开始新计划 |
+| `reqflow_report` | 报告阶段完成 |
+| `reqflow_verify` | 门禁验证 |
+| `reqflow_accept` | 用户验收通过 |
+| `reqflow_reject` | 用户验收拒绝 |
+| `reqflow_status` | 查询状态 |
+| `reqflow_blocker_add` | 添加 BLOCKER |
+| `reqflow_blocker_resolve` | 解决 BLOCKER |
+| `reqflow_tool_call` | 调用外部工具 |
+| `reqflow_memory_save` | 保存长期记忆 |
+| `reqflow_memory_load` | 加载长期记忆 |
+| `reqflow_git_check` | 检查 Git 状态 |
+
+## 相关 Skills
+
+- `requirement-flow` — 主入口
+- `harness-orchestrator` — 如何使用 Execution Skill
+- `context-understanding` — 上下文理解方法
+- `design-phase` — 设计阶段方法
+- `quality-gates` — 质量门禁说明
+- `loop-repair` — 循环修复说明
