@@ -27,7 +27,7 @@ from .workflow_loader import WorkflowLoader
 @dataclass
 class StepResult:
     name: str
-    status: str  # success | failure | skipped | aborted
+    status: str  # success | failure | skipped | aborted | blocked | timeout
     response: ModelResponse | None = None
     violations: list[Violation] = field(default_factory=list)
     error: str | None = None
@@ -188,9 +188,15 @@ class Engine:
                     final_result["failed_at"] = step["name"]
                     break
 
+                if step_result.status in ("blocked", "timeout"):
+                    final_result["status"] = step_result.status
+                    final_result["error"] = step_result.error
+                    final_result[f"{step_result.status}_at"] = step["name"]
+                    break
+
                 self.state_manager.complete_module(step["name"])
 
-            if final_result["status"] not in ("failed", "aborted"):
+            if final_result["status"] not in ("failed", "aborted", "blocked", "timeout"):
                 final_result["status"] = "completed"
         except Exception as e:
             final_result["status"] = "error"
@@ -668,6 +674,18 @@ class Engine:
                 system_prompt=system_prompt,
             )
 
+            # Detect blocked / timeout responses
+            step_status = "success"
+            if response.raw and isinstance(response.raw, dict):
+                raw_status = response.raw.get("status")
+                if raw_status in ("blocked", "timeout"):
+                    step_status = raw_status
+            if step_status == "success":
+                if "[BLOCKED]" in response.content:
+                    step_status = "blocked"
+                elif "[TIMEOUT]" in response.content:
+                    step_status = "timeout"
+
             # Record trace
             tokens = TracerTokenUsage(
                 input_tokens=response.tokens.input_tokens,
@@ -697,9 +715,10 @@ class Engine:
             duration = int((datetime.now() - start_time).total_seconds() * 1000)
             return StepResult(
                 name=step_name,
-                status="success",
+                status=step_status,
                 response=response,
                 violations=violations,
+                error=response.content if step_status in ("blocked", "timeout") else None,
                 duration_ms=duration,
             )
 
