@@ -11,6 +11,7 @@ from .guardrails import Guardrails
 from .workflow_loader import WorkflowLoader
 from .session import Session
 from .graph import Node, Edge, Graph
+from .hook_executor import HookExecutor
 
 __all__ = [
     "Engine",
@@ -28,4 +29,5 @@ __all__ = [
     "Node",
     "Edge",
     "Graph",
+    "HookExecutor",
 ]
