@@ -10,6 +10,7 @@ class Capabilities:
     supports_bash: bool = True
     supports_file_edit: bool = True
     supports_image: bool = False
+    supports_subagent: bool = False
     max_context_tokens: int = 200000
 
 

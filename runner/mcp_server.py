@@ -310,6 +310,10 @@ TOOLS: list[dict] = [
 
 async def _handle_run(arguments: dict) -> list:
     """处理 reqflow_run 工具调用。"""
+    import json as _json
+    from datetime import datetime as _dt
+    from pathlib import Path as _Path
+
     Engine, RuntimeRegistry = _import_core()
 
     requirement = arguments.get("requirement", "").strip()
@@ -320,26 +324,50 @@ async def _handle_run(arguments: dict) -> list:
     workflow_type = arguments.get("workflow", "flow")
     run_dir = arguments.get("run_dir")
 
+    # Pre-create run directory for failure artifacts
+    if not run_dir:
+        timestamp = _dt.now().strftime("%Y%m%d-%H%M%S")
+        run_dir = f".reqflow/runs/run-{timestamp}"
+    run_path = _Path(run_dir)
+    run_path.mkdir(parents=True, exist_ok=True)
+
+    def _write_failure_state(error_msg: str, stage: str = "init"):
+        state = {
+            "run_id": run_path.name,
+            "workflow": workflow_type,
+            "runtime": runtime_name or "auto",
+            "status": "init_failed",
+            "failed_at": stage,
+            "error": error_msg,
+            "guardrails_loaded": False,
+            "guidelines_loaded": False,
+            "created_at": _dt.now().isoformat(),
+            "updated_at": _dt.now().isoformat(),
+        }
+        (run_path / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
+
     # 选择 runtime
-    try:
-        registry = RuntimeRegistry()
-    except Exception as exc:
-        return [TextContent(type="text", text=f"[错误] 无法加载 runtime 配置: {exc}")]
+    registry = RuntimeRegistry()
 
     if runtime_name:
         try:
             config = registry.get(runtime_name)
         except ValueError as exc:
-            return [TextContent(type="text", text=f"[错误] {exc}")]
+            _write_failure_state(str(exc), "runtime_lookup")
+            return [TextContent(type="text", text=f"[错误] {exc}\n运行目录: {run_dir}")]
     else:
         config = _detect_runtime(registry)
         if config is None:
-            return [TextContent(type="text", text="[错误] 无法自动检测 runtime，请指定 runtime 参数。")]
+            errors = registry.list_errors()
+            detail = f" (配置加载错误: {errors})" if errors else ""
+            _write_failure_state(f"无法自动检测 runtime{detail}", "runtime_detect")
+            return [TextContent(type="text", text=f"[错误] 无法自动检测 runtime，请指定 runtime 参数。\n运行目录: {run_dir}")]
 
     # 可用性检查
     ready, reason = registry.check_readiness(config.name)
     if not ready:
-        return [TextContent(type="text", text=f"[错误] Runtime '{config.name}' 不可用: {reason}")]
+        _write_failure_state(f"Runtime '{config.name}' 不可用: {reason}", "runtime_readiness")
+        return [TextContent(type="text", text=f"[错误] Runtime '{config.name}' 不可用: {reason}\n运行目录: {run_dir}")]
 
     # 选择 workflow（从 YAML 加载）
     steps = _get_workflow_steps(workflow_type)
@@ -350,7 +378,8 @@ async def _handle_run(arguments: dict) -> list:
     try:
         result = await engine.run_workflow(workflow_steps=steps, requirement=requirement)
     except Exception as exc:
-        return [TextContent(type="text", text=f"[错误] Workflow 执行失败: {exc}")]
+        _write_failure_state(str(exc), "workflow_execution")
+        return [TextContent(type="text", text=f"[错误] Workflow 执行失败: {exc}\n运行目录: {run_dir}")]
 
     # 格式化输出
     lines = [
@@ -410,22 +439,23 @@ async def _handle_list_runtimes(_arguments: dict) -> list:
     """处理 reqflow_list_runtimes 工具调用。"""
     _, RuntimeRegistry = _import_core()
 
-    try:
-        registry = RuntimeRegistry()
-    except Exception as exc:
-        return [TextContent(type="text", text=f"[错误] 无法加载 runtime 配置: {exc}")]
+    registry = RuntimeRegistry()
 
     runtimes = registry.list_runtimes()
-    if not runtimes:
-        return [TextContent(type="text", text="未找到任何可用 runtime。")]
+    errors = registry.list_errors()
 
     lines = ["可用 runtime:"]
-    for name in runtimes:
-        try:
+    if runtimes:
+        for name in runtimes:
             config = registry.get(name)
             lines.append(f"  - {name:12s}  {config.display_name}")
-        except Exception:
-            lines.append(f"  - {name:12s}  (配置加载失败)")
+    else:
+        lines.append("  (无)")
+
+    if errors:
+        lines.append("\n加载失败的配置:")
+        for name, err in errors.items():
+            lines.append(f"  - {name:12s}  {err}")
 
     return [TextContent(type="text", text="\n".join(lines))]
 
@@ -760,6 +790,7 @@ async def _handle_health(_arguments: dict) -> list:
 
     lines = ["=== ReqFlow Health Check ==="]
 
+    # Layer 1: System
     lines.append("\n[System]")
     lines.append(f"  reqflow: OK")
     try:
@@ -768,33 +799,54 @@ async def _handle_health(_arguments: dict) -> list:
     except ImportError:
         lines.append(f"  mcp: NOT INSTALLED (pip install mcp)")
 
-    lines.append("\n[Runtimes]")
+    # Layer 2: Workflow loader
+    lines.append("\n[Workflow Loader]")
     try:
-        registry = RuntimeRegistry()
+        from .workflow_loader import WorkflowLoader
+        loader = WorkflowLoader()
+        wfs = loader.list_workflows()
+        lines.append(f"  OK — {len(wfs)} workflow(s): {', '.join(wfs)}")
     except Exception as exc:
         lines.append(f"  ERROR: {exc}")
-        registry = None
 
-    if registry:
-        for name in registry.list_runtimes():
+    # Layer 3: Runtime readiness
+    lines.append("\n[Runtimes]")
+    registry = RuntimeRegistry()
+    runtimes = registry.list_runtimes()
+    errors = registry.list_errors()
+
+    if errors:
+        for name, err in errors.items():
+            lines.append(f"  {name:12s}: SKIPPED — {err}")
+
+    if runtimes:
+        for name in runtimes:
             ready, reason = registry.check_readiness(name)
             status = "READY" if ready else "NOT READY"
             line = f"  {name:12s}: {status}"
             if reason:
                 line += f" — {reason}"
             lines.append(line)
-
-        lines.append("\n[Recommended]")
-        for name in registry.list_runtimes():
-            ready, _ = registry.check_readiness(name)
-            if ready and name not in ("manual",):
-                lines.append(f"  {name}")
-                break
-        else:
-            lines.append(f"  manual (no external runtime available)")
     else:
-        lines.append("\n[Recommended]")
-        lines.append(f"  manual")
+        lines.append("  (no runtimes loaded)")
+
+    # Recommended
+    lines.append("\n[Recommended]")
+    for name in runtimes:
+        ready, _ = registry.check_readiness(name)
+        if ready and name not in ("manual",):
+            lines.append(f"  {name}")
+            break
+    else:
+        lines.append(f"  manual (no external runtime available)")
+
+    # Overall verdict
+    any_ready = any(registry.check_readiness(n)[0] for n in runtimes)
+    lines.append("\n[Verdict]")
+    if any_ready:
+        lines.append("  workflow: EXECUTABLE")
+    else:
+        lines.append("  workflow: DEGRADED — only manual runtime available")
 
     return [TextContent(type="text", text="\n".join(lines))]
 
