@@ -53,6 +53,55 @@ class Dashboard:
             lines.append(f"  检测到超时。请检查 task.json 并提交 result.json 以恢复执行。")
             lines.append(f"  使用: reqflow host-task status <run_dir> 查看详情")
 
+        # Show reports
+        reports = status.get("reports", [])
+        if reports:
+            lines.append(f"\n--- Reports ({len(reports)}) ---")
+            for r in reports[-5:]:  # 最近 5 条
+                stage = r.get("stage", "?")
+                st = r.get("status", "?")
+                icon = "OK" if st == "done" else "FAIL" if st == "failed" else "BLOCK" if st == "blocked" else st.upper()
+                arts = ", ".join(r.get("artifacts", [])) if r.get("artifacts") else ""
+                line = f"  [{icon:5s}] {stage}"
+                if arts:
+                    line += f" -> {arts}"
+                lines.append(line)
+
+        # Show verifications
+        verifications = status.get("verifications", [])
+        if verifications:
+            lines.append(f"\n--- Verifications ({len(verifications)}) ---")
+            for v in verifications[-5:]:
+                gate = v.get("gate", "?")
+                passed = v.get("passed", False)
+                icon = "PASS" if passed else "FAIL"
+                lines.append(f"  [{icon:4s}] {gate}")
+                if v.get("summary"):
+                    lines.append(f"         {v['summary']}")
+
+        # Show blockers
+        blockers = status.get("blockers", [])
+        open_blockers = [b for b in blockers if b.get("status") == "open"]
+        if open_blockers:
+            lines.append(f"\n--- Blockers ({len(open_blockers)} open) ---")
+            for b in open_blockers:
+                lines.append(f"  [{b.get('level', '?')}] {b.get('id', '?')}: {b.get('question', '?')}")
+
+        # Show acceptance criteria
+        criteria = status.get("acceptance_criteria", [])
+        if criteria:
+            verified = sum(1 for c in criteria if c.get("status") == "verified")
+            lines.append(f"\n--- Acceptance Criteria ({verified}/{len(criteria)} verified) ---")
+            for c in criteria:
+                st = c.get("status", "pending")
+                icon = "x" if st == "verified" else " " if st == "pending" else "!"
+                lines.append(f"  [{icon}] {c.get('id', '?')}: {c.get('description', '?')}")
+
+        # Show workflow status
+        wf_status = status.get("workflow_status", "")
+        if wf_status:
+            lines.append(f"\nWorkflow Status: {wf_status}")
+
         lines.append(f"\nCheckpoints: {status.get('checkpoints', 0)}")
         lines.append(f"Memory:      {status.get('memory_entries', 0)} entries")
 
