@@ -151,6 +151,7 @@ reqflow_verify(run_id="<run-id>", gate="design-gate", evidence={...})
 | `reqflow_blocker_resolve` | 解决 BLOCKER |
 | `reqflow_blocker_check` | 检查 BLOCKER 状态 |
 | `reqflow_multi_repo_switch` | 多仓库切换 |
+| `reqflow_acceptance_update` | 更新验收标准状态 |
 
 ## 相关 Skills
 
