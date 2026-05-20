@@ -257,6 +257,249 @@ def _generate_mcp_guide() -> str:
 - `reqflow_health` — 检查 ReqFlow 系统健康状态"""
 
 
+# 辅助 Agent 映射表 — 每个阶段可选的辅助 Agent
+_AUXILIARY_AGENTS = {
+    "PRD理解": ["research-agent"],
+    "Spec治理": [],
+    "工作流智能": [],
+    "上下文发现": [],
+    "技术方案": ["research-agent", "architecture-agent"],
+    "实施计划": [],
+    "Agent执行": ["debug-agent"],
+    "代码审查": ["security-agent", "performance-agent"],
+    "交付验证": ["test-gen-agent"],
+    "归档": ["doc-agent"],
+    # 旧名称兼容
+    "上下文理解": [],
+    "代码梳理": [],
+    "生成代码": ["debug-agent"],
+    "跨模块终检": ["security-agent", "performance-agent"],
+    "总结": ["doc-agent"],
+    # L0/L1 特有
+    "分析报告": [],
+    "轻量实现": [],
+    "局部验证": [],
+}
+
+
+def _generate_standard_actions(stage_name: str, routing: RoutingDecision) -> str:
+    """生成阶段标准动作 — 每个阶段都有的自检、问题发现、确认点。"""
+    is_deep = routing.level in (RoutingLevel.L2, RoutingLevel.L3)
+    agents = _AUXILIARY_AGENTS.get(stage_name, [])
+
+    lines = [
+        "",
+        "### 阶段标准动作",
+        "",
+        "**完成上述任务后，必须执行以下标准动作：**",
+        "",
+        "#### 1. 自检",
+        "- 所有必需的产出物已生成",
+        "- 产出物格式符合规范",
+        "- 无遗漏的关键信息",
+        "- 产出内容与需求一致",
+        "",
+        "#### 2. 问题发现",
+        "",
+        "检查本阶段产出是否存在以下问题：",
+        "",
+        "**自修复问题（自行修复，记录到报告）：**",
+        "- 格式不规范、拼写错误、遗漏细节等小问题",
+        "",
+        "**需确认问题（报告给用户等待确认）：**",
+        "- 与需求不一致、逻辑错误、遗漏重要场景",
+        "",
+        "**阻塞问题（必须与用户讨论）：**",
+        "- 无法继续的技术障碍、需求歧义、外部依赖不可用",
+    ]
+
+    if agents:
+        agent_names = ", ".join(f"`{a}`" for a in agents)
+        lines.extend([
+            "",
+            "#### 3. 辅助 Agent（按需触发）",
+            f"- 本阶段可用的辅助 Agent: {agent_names}",
+            "- 触发条件见各 Agent 说明",
+            "- 调用后将结果整合到本阶段产出中",
+        ])
+
+    lines.extend([
+        "",
+        "#### 4. 阶段确认",
+        "- 展示本阶段产出摘要",
+        "- 列出自修复问题（已修复）和需确认问题（等待确认）",
+        "- 等待用户确认后才进入下一阶段",
+        "- 用户拒绝 → 询问具体问题 → 修复 → 重新展示 → 再次确认",
+        "- **修复循环无次数上限 — 直到用户确认**",
+    ])
+
+    return "\n".join(lines)
+
+
+def _generate_requirement_inquiry(routing: RoutingDecision) -> str:
+    """生成需求质询模板（PRD 阶段专用）。"""
+    is_deep = routing.level in (RoutingLevel.L2, RoutingLevel.L3)
+    num_questions = 5 if is_deep else 3
+
+    return f"""### 需求质询（主动发现问题）
+
+**读取 PRD 后，必须主动提出 {num_questions} 个关键问题：**
+
+1. **矛盾点** — PRD 中相互矛盾的描述
+2. **遗漏点** — PRD 中未涉及但应该有的内容
+3. **歧义点** — 可以有多种理解的描述
+4. **依赖点** — 依赖外部系统或接口的部分
+5. **风险点** — 实现难度大或不确定性高的部分
+
+**质询流程：**
+1. 提出问题清单
+2. 用户逐一回答
+3. 根据回答修正理解
+4. 生成"确认版 PRD 摘要"
+5. 用户确认后才进入下一阶段
+
+**如果 PRD 内容清晰无疑问，仍需输出：**
+- "需求质询：未发现问题，PRD 内容清晰完整"
+"""
+
+
+def _generate_solution_comparison(routing: RoutingDecision) -> str:
+    """生成方案对比模板（技术方案阶段专用）。"""
+    return """### 多方案对比
+
+**必须提出 2-3 个可行方案，每个方案评估：**
+
+| 维度 | 说明 |
+|------|------|
+| 实现复杂度 | 高/中/低 |
+| 风险等级 | 高/中/低 |
+| 可扩展性 | 好/一般/差 |
+| 兼容性 | 与现有系统的兼容程度 |
+| 性能 | 预期性能表现 |
+| 维护性 | 后期维护的难度和成本 |
+
+**方案对比矩阵示例：**
+
+| 维度 | 方案 A | 方案 B | 方案 C |
+|------|--------|--------|--------|
+| 实现复杂度 | 低 | 中 | 高 |
+| 风险等级 | 低 | 中 | 高 |
+| 可扩展性 | 差 | 好 | 好 |
+| 兼容性 | 好 | 一般 | 差 |
+
+**必须给出：**
+- 推荐方案及理由
+- 每个方案的风险和缓解措施
+- 用户选择方案后，再细化具体设计
+"""
+
+
+def _generate_deep_context_analysis() -> str:
+    """生成深度上下文分析模板（L2/L3 上下文发现阶段专用）。"""
+    return """### 深度上下文分析（L2/L3 模式）
+
+**除基础结构分析外，还需完成以下深度分析：**
+
+#### 语义分析
+- 模块职责：每个模块的核心职责是什么
+- 业务流程：关键业务流程的含义和流转
+- 领域概念：核心领域概念和术语定义
+
+#### 调用链分析
+- 入口→服务→数据→外部依赖的完整链路
+- 每个环节的输入输出
+- 异常处理和降级路径
+
+#### 复用分析
+- 哪些现有代码可以复用
+- 推荐复用路径
+- 复用的风险和注意事项
+
+#### 缺口标记
+- 哪些关键路径未覆盖
+- 风险点在哪
+- 需要补充的上下文
+"""
+
+
+def _generate_module_confirmation() -> str:
+    """生成模块级确认模板（Agent 执行阶段专用）。"""
+    return """### 关键模块确认
+
+**关键模块完成后，必须展示给用户确认：**
+
+1. 展示模块完成情况
+   - 实现了什么
+   - 发现了什么问题
+   - 如何解决的
+2. 用户可以提出修改意见
+3. 修改意见触发模块级修复循环
+4. 修复后重新展示，再次确认
+
+**关键模块定义：**
+- 数据库 schema 变更
+- 核心业务逻辑
+- 安全相关代码
+- 跨模块接口
+
+**非关键模块：** 完成后记录到报告，不暂停等待确认
+"""
+
+
+def _generate_review_enhancement() -> str:
+    """生成审查增强模板（代码审查阶段专用）。"""
+    return """### 审查发现处理
+
+**对每个审查发现给出：**
+
+| 字段 | 说明 |
+|------|------|
+| 问题描述 | 具体描述问题 |
+| 影响范围 | 影响哪些模块/功能 |
+| 修复建议 | 如何修复 |
+| 修复优先级 | 必须修复/建议优化 |
+
+**用户可以逐条确认或拒绝审查发现：**
+- 确认 → 记录并继续
+- 拒绝 → 讨论：是误报还是确实需要修复
+- 讨论后达成一致 → 记录并继续
+"""
+
+
+def _generate_verification_enhancement() -> str:
+    """生成验证增强模板（交付验证阶段专用）。"""
+    return """### 验证失败处理
+
+**验证失败时：**
+1. Agent 分析失败原因
+2. 给出修复方案
+3. 用户确认修复方案
+4. Agent 执行修复
+5. 重新验证，展示对比：修复前 vs 修复后
+
+**验证通过后：**
+- 生成完整验证报告
+- 列出所有验证项和结果
+- 标注已知的限制和注意事项
+"""
+
+
+def _generate_archive_enhancement() -> str:
+    """生成归档增强模板（归档阶段专用）。"""
+    return """### 流程复盘
+
+**生成流程复盘报告：**
+- 哪些阶段顺利
+- 哪些阶段有阻塞
+- 原因分析
+- 可复用的经验和模式
+
+**演进建议：**
+- 不自动应用，必须用户确认
+- 包含：配置变更、skill 变更、模板变更
+"""
+
+
 def _generate_stage(
     index: int,
     stage_name: str,
@@ -292,7 +535,14 @@ def _generate_stage(
     }
 
     generator = stage_generators.get(stage_name, _stage_generic)
-    return generator(index, stage_name, routing, project_structure, context_info, work_items)
+    stage_content = generator(index, stage_name, routing, project_structure, context_info, work_items)
+
+    # 启动和归档阶段不加标准动作（它们有自己的特殊流程）
+    skip_stages = {"启动", "归档", "总结"}
+    if stage_name not in skip_stages:
+        stage_content += _generate_standard_actions(stage_name, routing)
+
+    return stage_content
 
 
 def _stage_context(
@@ -516,7 +766,7 @@ def _stage_archive(
     context_info: dict[str, Any] | None,
     work_items: list[WorkItem] | None,
 ) -> str:
-    """Stage 10: Archive and Evolution — 归档与演进。"""
+    """Stage 10: Archive and Evolution — 归档与演进（V4）。"""
     return f"""## {name}
 
 ### 10.1 确认无未提交代码
@@ -526,21 +776,28 @@ def _stage_archive(
 - 归档 spec 变更到项目持久 spec
 - 确认是否还有遗留问题
 
-### 10.3 演进提案
+### 10.3 文档生成（按需）
+- 调用 `doc-agent` 生成和更新文档
+- 触发条件：代码变更涉及公共 API
+- 输出：文档更新内容
+
+{_generate_archive_enhancement()}
+
+### 10.5 演进提案
 - 生成演进建议（memory/skill/template/配置变更）
 - **⛔ 演进提案不自动应用**，需用户确认
 
-### 10.4 全流程汇总
+### 10.6 全流程汇总
 - 调用 `reqflow_memory_load` 加载 memory.md
 - 还原每步方案和关键决策
 - 生成配置清单、验收标准汇总、联调 Checklist
 
-### 10.5 归档
+### 10.7 归档
 - 归档永久文档可回溯
 - 更新项目文档和知识库
 - 生成运行总结
 
-### 10.6 报告
+### 10.8 报告
 - 调用 `reqflow_report` 报告完成
 - 产出: 10_archive.md"""
 
@@ -743,6 +1000,13 @@ def _stage_context_discovery(
         "- 发布策略（特性开关、灰度）",
         "- 稳定性（降级/限流/超时）",
         "- 前后端边界对齐",
+    ])
+
+    # L2/L3 深度模式：增加深度上下文分析
+    if routing.level in (RoutingLevel.L2, RoutingLevel.L3):
+        lines.extend(["", _generate_deep_context_analysis()])
+
+    lines.extend([
         "",
         "### 4.5 完备性检查",
         "- 上下文是否覆盖需求涉及的所有模块？",
@@ -829,27 +1093,38 @@ def _stage_agent_execution(
         "- **review**: 审查修复是否引入新问题",
         "- **decide**: 决定是否继续循环或升级",
         "",
-        "- 最多 3 轮修复",
+        "- 修复循环无次数上限",
         "- 同一问题指纹出现两次 → 升级到用户",
         "- 修复需要修改授权模块外的文件 → 升级到用户",
         "",
         "### 7.6 强制卡点",
-        "- 每模块需人工确认通过后才能进入下一个模块",
         "- 禁止修改无关逻辑",
         "- 已完成模块禁止重新生成",
         "- 新增逻辑必须用特性开关包裹",
         "- 全路径埋点：写操作/开关分支/频控拦截必须有打点",
         "- 埋点缺失视为 P1 BLOCKER",
+    ]
+
+    # L2/L3 深度模式：增加模块级确认
+    if routing.level in (RoutingLevel.L2, RoutingLevel.L3):
+        lines.extend(["", _generate_module_confirmation()])
+
+    lines.extend([
         "",
-        "### 7.7 Git 规则",
+        "### 7.7 修复循环 2 轮未解决时",
+        "- 调用 `debug-agent` 进行深度调试",
+        "- debug-agent 输出根因分析和修复方案",
+        "- 用户确认修复方案后执行修复",
+        "",
+        "### 7.8 Git 规则",
         "- master 上必须先切功能分支",
         "- 单次提交尽量小，能编译过就提交",
         "- BLOCKER 修复后单独 commit（不与编码提交交叉）",
         "",
-        "### 7.8 报告",
+        "### 7.9 报告",
         "- 每个工作项完成后调用 `reqflow_report`",
         "- 产出: 07_agent_execution.md, agent/work_items.json",
-    ]
+    ])
 
     if work_items:
         lines.append("")
@@ -868,7 +1143,7 @@ def _stage_code_review(
     context_info: dict[str, Any] | None,
     work_items: list[WorkItem] | None,
 ) -> str:
-    """Stage 8: Code Review — 代码审查（替代旧的跨模块终检/代码审查）。"""
+    """Stage 8: Code Review — 代码审查（V4）。"""
     return f"""## {name}
 
 ### 8.1 跨模块 Review
@@ -890,12 +1165,24 @@ def _stage_code_review(
 - 新 DB/缓存 key 是否兼容旧数据？
 - 上下游服务是否受影响？
 
-### 8.5 BLOCKER 处理
+### 8.5 安全审计（按需）
+- 调用 `security-agent` 检查安全漏洞
+- 触发条件：涉及认证、授权、加密、输入校验
+- 输出：安全发现清单、修复建议
+
+### 8.6 性能分析（按需）
+- 调用 `performance-agent` 分析性能瓶颈
+- 触发条件：涉及数据库查询、缓存、并发处理
+- 输出：性能分析报告、优化建议
+
+{_generate_review_enhancement()}
+
+### 8.8 BLOCKER 处理
 - BLOCKER 修复后单独 commit（不与编码提交交叉）
 - 有 BLOCKER → 修复 + commit + 重给清单
 - 无 BLOCKER → 人工确认后继续
 
-### 8.6 报告
+### 8.9 报告
 - 调用 `reqflow_report` 报告完成
 - 产出: 08_code_review.md"""
 
@@ -908,7 +1195,7 @@ def _stage_delivery_verification(
     context_info: dict[str, Any] | None,
     work_items: list[WorkItem] | None,
 ) -> str:
-    """Stage 9: Delivery Verification — 交付验证。"""
+    """Stage 9: Delivery Verification — 交付验证（V4）。"""
     return f"""## {name}
 
 ### 9.1 构建验证
@@ -919,16 +1206,23 @@ def _stage_delivery_verification(
 - 运行测试套件，验证全部通过
 - 测试失败 → 进入 Loop Engine 修复循环
 
-### 9.3 合规报告
+### 9.3 测试生成（按需）
+- 调用 `test-gen-agent` 生成补充测试用例
+- 触发条件：测试覆盖不足
+- 输出：补充测试用例
+
+### 9.4 合规报告
 - 汇总所有验证证据
 - 调用 `reqflow_verify(gate="compliance-report")`
 - 状态: PASS / CONDITIONAL PASS / FAIL / BLOCKED
 
-### 9.4 修复循环
-- 验证失败时进入 Loop Engine（最多 3 轮）
+### 9.5 修复循环
+- 验证失败时进入 Loop Engine（无次数上限）
 - 修复循环状态机: observe → classify → localize → patch → verify → review → decide
 
-### 9.5 报告
+{_generate_verification_enhancement()}
+
+### 9.7 报告
 - 调用 `reqflow_report` 报告完成
 - 产出: 09_verification.md"""
 
@@ -951,7 +1245,7 @@ def _stage_generic(
 
 
 def _stage_prd(index, name, routing, structure, context_info, work_items):
-    """PRD 理解阶段（V3）。"""
+    """PRD 理解阶段（V4）。"""
     return f"""## {name}
 
 ### 1.1 PRD 交叉校验
@@ -974,7 +1268,9 @@ def _stage_prd(index, name, routing, structure, context_info, work_items):
 - P2: 仅记录，后续处理
 - 调用 `reqflow_report` 报告时必须包含 BLOCKER 清单
 
-### 1.5 报告
+{_generate_requirement_inquiry(routing)}
+
+### 1.6 报告
 - 调用 `reqflow_report` 报告完成
 - 产出: 01_prd_summary.md"""
 
@@ -1000,16 +1296,14 @@ def _stage_code_discovery(index, name, routing, structure, context_info, work_it
 
 
 def _stage_tech_plan(index, name, routing, structure, context_info, work_items):
-    """技术方案阶段（V3）。"""
+    """技术方案阶段（V4）。"""
     return f"""## {name}
 
 ### 3.1 方案模板
 - 按模板组织内容，不自选章节
 - 覆盖 QPS/分桶/缓存/存储/降级选型
 
-### 3.2 方案决策点
-- 均明确则跳过，否则讨论 2-3 方案并给出推荐
-- 数据操作必须明确落地方案（唯一索引/业务key/Redis策略等）
+{_generate_solution_comparison(routing)}
 
 ### 3.3 兼容性与稳定性
 - 兼容现有系统，不破坏现有能力
