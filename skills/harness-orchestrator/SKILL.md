@@ -11,13 +11,40 @@ description: >
 你是 ReqFlow Harness 的执行者。Harness 已经为你生成了一个 Execution Skill（执行剧本），
 你的任务是按照剧本执行。
 
-## 核心规则
+## ⛔ 强制执行协议
 
-1. **读取 Execution Skill** — 它在 `.dev-workflow/runs/<run-id>/exec-skill.md`
-2. **按阶段执行** — 不要跳过阶段，不要提前执行
-3. **报告状态** — 每个阶段完成后调用 `reqflow_report`
-4. **请求验证** — 门禁检查时调用 `reqflow_verify`
-5. **等待指引** — 遇到 BLOCKED 时调用 `reqflow_status` 获取下一步
+> **以下规则不可违反。违反任何一条即为流程失败。**
+
+### 1. 必须执行所有阶段
+
+读取 Execution Skill 后，**必须按顺序执行其中定义的每一个阶段**。
+- 不得跳过任何阶段
+- 不得提前结束
+- 不得在只完成部分阶段时声称"已完成"
+
+### 2. 每阶段必须报告
+
+每个阶段完成后，**必须调用 `reqflow_report`**：
+```
+reqflow_report(run_id="<run-id>", stage="<阶段名称>", status="done", artifacts=[...])
+```
+
+### 3. 门禁必须验证
+
+Execution Skill 中指定的门禁，**必须调用 `reqflow_verify`** 验证。
+门禁未通过 → 修复 → 重新验证。不得跳过。
+
+### 4. 必须等待用户验收
+
+所有阶段完成后，**必须停止并等待用户验收**：
+- 展示完成状态和产出物摘要
+- 告知用户："所有阶段已完成，请验收。`reqflow_accept` 通过 / `reqflow_reject` 拒绝。"
+- **不得自行调用 `reqflow_accept`**
+- **不得在未收到用户验收决定前结束会话**
+
+### 5. 用户拒绝后必须修复
+
+`reqflow_reject` → 记录原因 → 回到相关阶段修复 → 重新走完 → 再次等待验收。
 
 ## 入口点
 
@@ -25,9 +52,22 @@ Execution Skill 头部定义了入口点（entry_point）：
 
 | 入口点 | 说明 | 起始阶段 |
 |--------|------|----------|
-| prd | 从 PRD 开始完整流程 | PRD 理解 |
+| prd | 从 PRD 开始完整流程 | PRD 理解 / 上下文理解 |
 | tech_plan | 从技术方案开始 | 代码梳理 |
 | resume | 从断点恢复 | 根据 state.json |
+
+## 路由级别
+
+Execution Skill 头部定义了路由级别（routing_level），决定阶段模板：
+
+| 级别 | 阶段 |
+|------|------|
+| L0 | 上下文理解 → 分析报告 |
+| L1 | 上下文理解 → 轻量实现 → 局部验证 |
+| L2 | 上下文理解 → 技术方案 → 实施计划 → 生成代码 → 跨模块终检 → 总结 |
+| L3 | PRD理解 → 代码梳理 → 技术方案 → 实施计划 → 生成代码 → 跨模块终检 → 总结 |
+
+**Agent 必须按 Execution Skill 中定义的阶段顺序执行。**
 
 ## BLOCKER 管理
 
@@ -76,46 +116,35 @@ prepare → build → generate → self_check → review → confirm → commit 
 - BLOCKER 修复使用独立提交
 - 小步提交，每个逻辑变更一个提交
 
-## 外部工具
-
-使用 `reqflow_tool_call` 调用外部工具（通过 MCP 协议）：
-
-- docs-shuttle — 文档管理
-- common-components — 公共组件查询
-- coding-standards — 编码规范检查
-- pitfall — 常见陷阱检查
-
-## 自由发挥空间
-
-Execution Skill 定义了"做什么"，但"怎么做"由你决定：
-- 具体的代码实现方式
-- 测试用例的选择
-- 重构的方向
-- 工具的使用方式
-
 ## 禁止事项
 
+- 不要跳过任何阶段
 - 不要跳过质量门禁
 - 不要在没有验证证据的情况下声称完成
 - 不要修改 Execution Skill 本身（它是 Harness 生成的）
 - 不要忽略 BLOCKED 状态
 - 不要在受保护分支上直接提交
 - 不要忽略 P0 BLOCKER
+- **不要自行调用 `reqflow_accept` — 只有用户才能验收**
+- **不要在未收到用户验收决定前结束会话**
 
 ## 执行流程
 
 ```
 1. 读取 Execution Skill
-2. 理解全局约束
+2. 理解全局约束和路由级别
 3. 检查入口点（prd/tech_plan/resume）
-4. 按阶段顺序执行:
+4. 按阶段顺序执行（必须执行所有阶段）:
    a. 执行阶段任务
    b. 管理 BLOCKER（P0 必须关闭）
    c. 调用 reqflow_report 报告状态
    d. 如果有门禁，调用 reqflow_verify
    e. 如果门禁未通过，按指引修复
-5. 所有阶段完成后，等待用户验收
-6. 用户验收通过后，调用 reqflow_accept
+5. 所有阶段完成后，调用 reqflow_dashboard 展示面板
+6. 汇总产出物，告知用户等待验收
+7. 【强制停止】等待用户调用 reqflow_accept 或 reqflow_reject
+8. 如果用户拒绝 → 回到步骤 4 修复
+9. 如果用户通过 → 流程结束
 ```
 
 ## 状态报告格式
@@ -136,7 +165,7 @@ reqflow_report(
 ```
 reqflow_verify(
     run_id="<run-id>",
-    gate="design-gate",  # design-gate | tdd-gate | completion-gate | compliance-report
+    gate="completion-gate",  # design-gate | tdd-gate | completion-gate | compliance-report
     evidence={...},
 )
 ```

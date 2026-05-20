@@ -1158,9 +1158,12 @@ def _normalize_evidence(gate: str, evidence: dict) -> dict:
         for key in ("tests_passing", "tests_passed", "test_pass", "all_tests_pass"):
             if key in ctx and "tests_passing" not in ctx:
                 ctx["tests_passing"] = ctx[key]
-        for key in ("spec_compliant", "spec_compliance", "spec_ok"):
+        for key in ("spec_compliant", "spec_compliance", "spec_ok", "spec_pass"):
             if key in ctx and "spec_compliant" not in ctx:
                 ctx["spec_compliant"] = ctx[key]
+        for key in ("all_work_items_done", "work_items_done", "all_items_done"):
+            if key in ctx and "all_work_items_done" not in ctx:
+                ctx["all_work_items_done"] = ctx[key]
         # 支持 completed_items / total_items 从 artifacts 数量推断
         if "completed_items" not in ctx and "artifacts" in ctx:
             arts = ctx["artifacts"]
@@ -1177,6 +1180,16 @@ def _normalize_evidence(gate: str, evidence: dict) -> dict:
     # 从字符串 evidence 值推断布尔字段
     _parse_evidence_values(ctx)
 
+    # completion-gate: 如果 build_success 和 tests_passing 都为 True，
+    # 且 completed_items >= total_items，则推断 spec_compliant 和 all_work_items_done
+    if gate == "completion-gate":
+        if ctx.get("build_success") and ctx.get("tests_passing"):
+            completed = ctx.get("completed_items", 0)
+            total = ctx.get("total_items", 1)
+            if total > 0 and completed >= total:
+                ctx.setdefault("all_work_items_done", True)
+                ctx.setdefault("spec_compliant", True)
+
     return ctx
 
 
@@ -1190,10 +1203,13 @@ def _parse_evidence_values(ctx: dict) -> None:
             for item in v:
                 if isinstance(item, str):
                     indicators.append(item.lower())
+        elif isinstance(v, bool):
+            # 布尔值直接作为指标
+            indicators.append(str(v).lower())
     combined = " ".join(indicators)
 
     if "build_success" not in ctx:
-        if "build success" in combined or "compile success" in combined:
+        if "build success" in combined or "compile success" in combined or "build success" in combined:
             ctx["build_success"] = True
 
     if "tests_passing" not in ctx:
@@ -1201,13 +1217,25 @@ def _parse_evidence_values(ctx: dict) -> None:
             ctx["tests_passing"] = True
         elif "test pass" in combined or "tests pass" in combined:
             ctx["tests_passing"] = True
+        elif "true" in combined and ("tests_passing" in ctx or "test" in combined):
+            ctx["tests_passing"] = True
 
     if "spec_compliant" not in ctx:
         if "spec" in combined and ("compliant" in combined or "pass" in combined):
             ctx["spec_compliant"] = True
+        elif "all requirements met" in combined or "requirements met" in combined:
+            ctx["spec_compliant"] = True
+        elif "compliant" in combined and ("true" in combined or "pass" in combined):
+            ctx["spec_compliant"] = True
 
     if "all_work_items_done" not in ctx:
-        if ctx.get("completed_items", 0) >= ctx.get("total_items", 1):
+        completed = ctx.get("completed_items", 0)
+        total = ctx.get("total_items", 1)
+        if total > 0 and completed >= total:
+            ctx["all_work_items_done"] = True
+        elif "all work items" in combined and ("done" in combined or "complete" in combined):
+            ctx["all_work_items_done"] = True
+        elif "all items" in combined and ("done" in combined or "complete" in combined):
             ctx["all_work_items_done"] = True
 
 

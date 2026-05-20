@@ -108,6 +108,7 @@ def generate_execution_skill(
         sections.append(_generate_work_item_details(work_items))
 
     sections.append(_generate_pause_conditions())
+    sections.append(_generate_completion_protocol(run_id))
 
     content = "\n\n".join(sections)
 
@@ -147,20 +148,24 @@ def _generate_global_constraints(routing: RoutingDecision) -> str:
     constraints = [
         "## 全局约束",
         "",
+        "### ⛔ 强制执行协议（不可违反）",
+        "",
+        "1. **必须执行所有阶段** — 按顺序执行本文件定义的每一个阶段，不得跳过、不得提前结束",
+        "2. **每阶段必须报告** — 每个阶段完成后必须调用 `reqflow_report` 报告状态",
+        "3. **门禁必须验证** — 指定的门禁检查点必须调用 `reqflow_verify`，未通过则修复后重新验证",
+        "4. **必须等待用户验收** — 所有阶段完成后必须停止，等待用户调用 `reqflow_accept` 或 `reqflow_reject`",
+        "5. **不得自行验收** — 只有用户才能决定是否通过，Agent 不得自行调用 `reqflow_accept`",
+        "",
+        "### 代码与工程约束",
+        "",
         "- 所有代码变更必须通过测试验证",
-        "- 每个阶段完成后调用 `reqflow_report` 报告状态",
         "- P0 BLOCKER 全部关闭才能进入下一阶段",
         "- 大量 IO 操作必须用 subagent 隔离（保护主会话 context）",
         "- 主会话不做全量扫描，只做定向搜索，单次搜索结果限制 50 条",
         "- master 上必须先切功能分支",
         "- 单次提交尽量小，能编译过就提交，不攒代码",
-        "- 新增逻辑必须用特性开关包裹，无论改动大小",
-        "- 全路径埋点：关键路径必须有监控打点",
         "- 使用中文与用户沟通，技术术语保持原样",
-        "- 每个阶段完成后调用 `reqflow_report` 报告状态",
         "- 遇到 BLOCKED 状态时调用 `reqflow_status` 获取下一步指引",
-        "- 完成后调用 `reqflow_verify` 请求验证",
-        "- 使用中文与用户沟通，技术术语保持原样",
     ]
 
     if routing.level == RoutingLevel.L3:
@@ -177,14 +182,26 @@ def _generate_mcp_guide() -> str:
     """生成 MCP 工具使用指南。"""
     return """## MCP 工具使用指南
 
-- `reqflow_plan` — 开始新计划（在阶段 1 开始时调用）
-- `reqflow_report` — 报告阶段完成（每个阶段结束时调用）
+**每个阶段必须调用的工具：**
+- `reqflow_report` — 报告阶段完成（每个阶段结束时**必须**调用）
   - 参数: run_id, stage, status (done/blocked/timeout/failed), artifacts, error
+
+**门禁检查工具：**
 - `reqflow_verify` — 请求验证（门禁检查时调用）
   - 参数: run_id, gate (design-gate/tdd-gate/completion-gate/compliance-report), evidence
-- `reqflow_accept` — 用户验收通过
-- `reqflow_reject` — 用户验收拒绝
-- `reqflow_status` — 查询当前状态和下一步指引"""
+
+**用户验收工具（所有阶段完成后使用）：**
+- `reqflow_accept` — 用户验收通过（**只有用户才能调用**）
+- `reqflow_reject` — 用户验收拒绝（触发修复循环）
+
+**辅助工具：**
+- `reqflow_status` — 查询当前状态和下一步指引
+- `reqflow_dashboard` — 展示运行面板
+- `reqflow_blocker_add` — 添加 BLOCKER
+- `reqflow_blocker_resolve` — 解决 BLOCKER
+- `reqflow_memory_save` — 保存长期记忆
+- `reqflow_memory_load` — 加载长期记忆
+- `reqflow_git_check` — 检查 Git 状态"""
 
 
 def _generate_stage(
@@ -740,6 +757,49 @@ def _generate_pause_conditions() -> str:
 
 请选择下一步操作？
 ```"""
+
+
+def _generate_completion_protocol(run_id: str) -> str:
+    """生成强制验收协议 — Agent 必须在此停止等待用户验收。"""
+    return f"""## ⛔ 强制验收协议
+
+> **所有阶段完成后，Agent 必须执行以下协议。违反即为流程失败。**
+
+### 步骤 1: 展示完成状态
+
+调用 `reqflow_dashboard` 展示运行面板：
+```
+reqflow_dashboard(run_dir=".reqflow/runs/{run_id}")
+```
+
+### 步骤 2: 汇总产出物
+
+列出所有已完成阶段和产出物：
+- 每个阶段的名称和状态
+- 关键产出物文件路径
+- 测试结果摘要
+- 构建结果摘要
+
+### 步骤 3: 告知用户等待验收
+
+**必须向用户输出以下内容：**
+
+```
+所有阶段已完成，请验收。
+
+- 通过验收：调用 reqflow_accept(run_id="{run_id}")
+- 拒绝验收：调用 reqflow_reject(run_id="{run_id}", reason="拒绝原因")
+```
+
+### 步骤 4: 强制停止
+
+**⛔ 在收到用户的验收决定之前，Agent 不得：**
+- 自行调用 `reqflow_accept`
+- 结束会话
+- 执行任何其他操作
+- 声称"已完成"或"已交付"
+
+**只有用户才能决定是否通过验收。**"""
 
 
 def save_execution_skill(skill: ExecutionSkill, run_dir: str) -> str:

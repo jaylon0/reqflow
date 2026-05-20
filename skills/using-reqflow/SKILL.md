@@ -15,9 +15,9 @@ ReqFlow Harness 使用指南。引导用户完成从需求到交付的全流程�
 **Harness 生成剧本，Agent 执行演出。**
 
 ReqFlow 是一个 Harness（编排器），它：
-1. 分析需求，决定路由级别
+1. 分析需求，决定路由级别（L0/L1/L2/L3）
 2. 扫描项目上下文
-3. 生成 Execution Skill（执行剧本）
+3. 根据路由级别生成对应的 Execution Skill（执行剧本）
 4. Agent 按剧本执行，通过 MCP 工具回报状态
 
 ## 触发方式
@@ -32,6 +32,58 @@ ReqFlow 是一个 Harness（编排器），它：
 /reqflow:using-reqflow <需求内容>
 ```
 
+## 路由级别与阶段模板
+
+ReqFlow 根据需求内容自动路由到不同级别，每个级别有对应的阶段模板：
+
+| 级别 | 触发条件 | 阶段 |
+|------|----------|------|
+| L0 只读分析 | 分析/评估/解释类请求 | 上下文理解 → 分析报告 |
+| L1 轻量修改 | 单文件低风险修复 | 上下文理解 → 轻量实现 → 局部验证 |
+| L2 计划性修改 | 多文件功能开发 | 上下文理解 → 技术方案 → 实施计划 → 生成代码 → 跨模块终检 → 总结 |
+| L3 交付循环 | API/DB/消息/安全/部署变更 | PRD理解 → 代码梳理 → 技术方案 → 实施计划 → 生成代码 → 跨模块终检 → 总结 |
+
+**Agent 必须按 Execution Skill 中定义的阶段顺序执行，不得跳过任何阶段。**
+
+## 强制执行协议
+
+> **⛔ 以下规则不可违反，违反任何一条即为流程失败。**
+
+### 规则 1: 必须执行所有阶段
+
+Agent 读取 Execution Skill 后，**必须按顺序执行其中定义的每一个阶段**。
+不得跳过任何阶段，不得提前结束，不得在只完成部分阶段时声称"已完成"。
+
+### 规则 2: 每阶段必须报告
+
+每个阶段完成后，**必须调用 `reqflow_report`** 报告该阶段状态：
+```
+reqflow_report(run_id="<run-id>", stage="<阶段名称>", status="done", artifacts=[...])
+```
+
+### 规则 3: 门禁必须验证
+
+Execution Skill 中指定的门禁检查点，**必须调用 `reqflow_verify`** 进行验证：
+- L2/L3 的"跨模块终检"阶段必须调用 `reqflow_verify(gate="completion-gate")`
+- L0/L1 的"局部验证"/"分析报告"阶段根据 Execution Skill 指引决定是否需要门禁
+- 门禁未通过时，必须按指引修复后重新验证，不得跳过
+
+### 规则 4: 必须等待用户验收
+
+所有阶段完成后，Agent **必须停止执行并等待用户验收**：
+- 向用户展示完成状态和产出物摘要
+- **明确告知用户**："所有阶段已完成，请验收。调用 `reqflow_accept` 通过或 `reqflow_reject` 拒绝。"
+- **不得自行调用 `reqflow_accept`** — 只有用户才能决定是否通过
+- **不得在未收到用户验收决定前结束会话**
+
+### 规则 5: 用户拒绝后必须修复
+
+如果用户调用 `reqflow_reject`，Agent 必须：
+1. 记录拒绝原因
+2. 回到相关阶段修复问题
+3. 修复后重新走完剩余阶段
+4. 再次等待用户验收
+
 ## 流程
 
 ### 1. 创建计划
@@ -45,37 +97,19 @@ Harness 会自动：
 - 路由分析（L0/L1/L2/L3）
 - 入口点检测（prd/tech_plan/resume）
 - 上下文扫描（项目结构、技术栈、入口文件）
-- 生成 Execution Skill（执行剧本）
+- 根据路由级别生成对应的 Execution Skill
 
 ### 2. 读取 Execution Skill
 
 ```
-cat .dev-workflow/runs/<run-id>/exec-skill.md
+cat .reqflow/runs/<run-id>/exec-skill.md
 ```
 
-Execution Skill 定义了：
-- 全局约束（BLOCKER 管理、上下文保护、Git 工作流）
-- 入口点（prd/tech_plan/resume）
-- 各阶段的具体任务
-- MCP 工具使用指南
-- 门禁检查点
-- 暂停条件
+Execution Skill 头部包含路由级别和阶段列表，Agent 必须据此执行。
 
-### 3. 按阶段执行
+### 3. 按阶段执行（强制）
 
-按 Execution Skill 定义的阶段顺序执行：
-
-| 阶段 | 任务 | 门禁 |
-|------|------|------|
-| 上下文理解 | 项目扫描、语义分析、完备性检查 | — |
-| 设计 | Meta Spec、Feature Spec、技术方案 | design-gate |
-| 实现计划 | 工作项分解、TDD 计划 | tdd-gate |
-| 实现 | 编码、测试、重构 | — |
-| 代码审查 | Spec 合规、代码质量 | completion-gate |
-| 交付验证 | 构建、测试、合规报告 | compliance-report |
-| 归档 | 用户验收、经验教训 | — |
-
-每个阶段完成后调用 `reqflow_report` 报告状态。
+按 Execution Skill 定义的阶段**顺序执行**。每个阶段完成后必须调用 `reqflow_report`。
 
 ### 4. BLOCKER 管理
 
@@ -93,65 +127,48 @@ Execution Skill 定义了：
 
 需要门禁检查时调用 `reqflow_verify`：
 ```
-reqflow_verify(run_id="<run-id>", gate="design-gate", evidence={...})
+reqflow_verify(run_id="<run-id>", gate="completion-gate", evidence={...})
 ```
 
-### 6. 长期记忆
+### 6. 用户验收（强制停止点）
 
-使用 `reqflow_memory_save` 保存重要决策和约束：
-```
-reqflow_memory_save(
-    category="decision",
-    key="使用 PostgreSQL 而非 MySQL",
-    content="因为需要 JSONB 支持",
-    run_id="<run-id>"
-)
-```
+> **⛔ 所有阶段完成后，Agent 必须在此停止。**
 
-使用 `reqflow_memory_load` 加载历史记忆。
+Agent 必须：
+1. 调用 `reqflow_dashboard` 展示运行面板
+2. 汇总所有已完成阶段和产出物
+3. 告知用户："请验收。通过请调用 `reqflow_accept`，拒绝请调用 `reqflow_reject`。"
+4. **等待用户响应，不得自行结束**
 
-### 7. 用户验收
+### 7. 验收结果处理
 
-完成所有阶段后，等待用户验收：
 - 用户通过: `reqflow_accept(run_id="<run-id>")`
 - 用户拒绝: `reqflow_reject(run_id="<run-id>", reason="...")`
+
+拒绝后 Agent 回到修复流程，修复完成后再次等待验收。
 
 ## MCP 工具
 
 | 工具 | 用途 |
 |------|------|
+| `reqflow_plan` | 开始新计划 |
 | `reqflow_run` | 执行 workflow |
 | `reqflow_status` | 查询运行状态 |
-| `reqflow_list_runtimes` | 列出可用 runtime |
-| `reqflow_run_graph` | 执行图编排 |
-| `reqflow_session_save` | 保存会话 |
-| `reqflow_session_load` | 加载会话 |
-| `reqflow_dashboard` | Dashboard 可视化 |
-| `reqflow_checkpoint` | 管理检查点 |
-| `reqflow_parallel` | 并行 agent 调度 |
-| `reqflow_trace` | 执行追踪 |
-| `reqflow_guardrails` | 约束检查 |
-| `reqflow_health` | 健康检查 |
-| `reqflow_plan` | 开始新计划 |
 | `reqflow_report` | 报告阶段完成 |
 | `reqflow_verify` | 门禁验证 |
 | `reqflow_accept` | 用户验收通过 |
 | `reqflow_reject` | 用户验收拒绝 |
-| `reqflow_tool_call` | 调用外部工具 |
-| `reqflow_memory_save` | 保存长期记忆 |
-| `reqflow_memory_load` | 加载长期记忆 |
-| `reqflow_git_check` | 检查 Git 状态 |
+| `reqflow_dashboard` | Dashboard 可视化 |
 | `reqflow_blocker_add` | 添加 BLOCKER |
 | `reqflow_blocker_resolve` | 解决 BLOCKER |
 | `reqflow_blocker_check` | 检查 BLOCKER 状态 |
-| `reqflow_multi_repo_switch` | 多仓库切换 |
+| `reqflow_memory_save` | 保存长期记忆 |
+| `reqflow_memory_load` | 加载长期记忆 |
+| `reqflow_git_check` | 检查 Git 状态 |
 | `reqflow_acceptance_update` | 更新验收标准状态 |
+| `reqflow_health` | 健康检查 |
 
 ## 相关 Skills
 
 - `requirement-flow` — 主入口
 - `harness-orchestrator` — 如何使用 Execution Skill
-- `context-understanding` — 上下文理解方法
-- `design-phase` — 设计阶段方法
-- `quality-gates` — 质量门禁说明
-- `loop-repair` — 循环修复说明
