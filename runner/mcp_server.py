@@ -1923,7 +1923,7 @@ async def _handle_blocker_check(arguments: dict) -> list:
     if not run_id:
         return [TextContent(type="text", text="[错误] run_id 不能为空。")]
 
-    from reqflow.core.blocker_manager import BlockerManager
+    from reqflow.core.blocker_manager import BlockerManager, BlockerLevel
     bm = BlockerManager()
 
     # Load existing blockers
@@ -1934,7 +1934,7 @@ async def _handle_blocker_check(arguments: dict) -> list:
             state = _json.load(f)
         bm.load_from_list(state.get("blockers", []))
 
-    open_p0 = bm.get_open_p0()
+    open_p0 = bm.get_open(BlockerLevel.P0)
     all_blockers = bm.to_list()
 
     lines = [f"P0 未关闭: {len(open_p0)}"]
