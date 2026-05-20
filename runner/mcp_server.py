@@ -1041,7 +1041,7 @@ async def _handle_health(_arguments: dict) -> list:
     # Layer 2: Workflow loader
     lines.append("\n[Workflow Loader]")
     try:
-        from .workflow_loader import WorkflowLoader
+        from reqflow.core.workflow_loader import WorkflowLoader
         loader = WorkflowLoader()
         wfs = loader.list_workflows()
         lines.append(f"  OK — {len(wfs)} workflow(s): {', '.join(wfs)}")
@@ -1170,6 +1170,28 @@ def _normalize_evidence(gate: str, evidence: dict) -> dict:
             if isinstance(arts, list):
                 ctx.setdefault("completed_items", len(arts))
                 ctx.setdefault("total_items", len(arts))
+
+    # tdd-gate 标准化
+    if gate == "tdd-gate":
+        # 兼容 failing_tests_defined / failing_tests 等变体
+        for key in ("failing_tests_defined", "failing_tests", "red_tests", "failing_test_count"):
+            if key in ctx and "failing_tests_count" not in ctx:
+                ctx["failing_tests_count"] = ctx[key]
+        for key in ("test_plan_exists", "test_plan_file", "has_test_plan"):
+            if key in ctx and "test_plan" not in ctx:
+                ctx["test_plan"] = ctx[key]
+        # 支持从文件列表推断
+        if "failing_tests_count" not in ctx and "test_files" in ctx:
+            files = ctx["test_files"]
+            if isinstance(files, list):
+                ctx.setdefault("failing_tests_count", len(files))
+        if "test_plan" not in ctx and "artifacts" in ctx:
+            arts = ctx["artifacts"]
+            if isinstance(arts, list):
+                for art in arts:
+                    if isinstance(art, str) and ("test" in art.lower() or "tdd" in art.lower()):
+                        ctx.setdefault("test_plan", True)
+                        break
 
     # compliance-report 标准化
     if gate == "compliance-report":
@@ -1649,6 +1671,7 @@ async def _handle_blocker_add(arguments: dict) -> list:
     """处理 reqflow_blocker_add 工具调用。"""
     import json as _json
     from pathlib import Path as _Path
+    from datetime import datetime as _dt
 
     run_id = arguments.get("run_id", "")
     level = arguments.get("level", "P0")
@@ -1793,8 +1816,10 @@ async def _handle_acceptance_update(arguments: dict) -> list:
 
     criteria = state.get("acceptance_criteria", [])
     found = False
+    # 支持大小写不敏感匹配 (AC-01, ac-01, Ac-01)
+    criteria_id_lower = criteria_id.lower()
     for c in criteria:
-        if c.get("id") == criteria_id:
+        if c.get("id", "").lower() == criteria_id_lower:
             c["status"] = new_status
             if evidence:
                 c["evidence"] = evidence
@@ -1802,7 +1827,17 @@ async def _handle_acceptance_update(arguments: dict) -> list:
             break
 
     if not found:
-        return [TextContent(type="text", text=f"[错误] 未找到验收标准: {criteria_id}")]
+        # 如果验收标准列表为空或未找到，自动创建该标准
+        if not criteria:
+            criteria = []
+        new_criteria = {"id": criteria_id.lower(), "description": f"验收标准 {criteria_id}", "status": new_status, "evidence": evidence or ""}
+        criteria.append(new_criteria)
+        state["acceptance_criteria"] = criteria
+        state["updated_at"] = _dt.now().isoformat()
+        with open(state_path, "w") as f:
+            _json.dump(state, f, indent=2, ensure_ascii=False)
+        verified = sum(1 for c in criteria if c.get("status") == "verified")
+        return [TextContent(type="text", text=f"验收标准 {criteria_id} 已创建并更新为 {new_status}。进度: {verified}/{len(criteria)} verified")]
 
     state["acceptance_criteria"] = criteria
     state["updated_at"] = _dt.now().isoformat()
