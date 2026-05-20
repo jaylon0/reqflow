@@ -302,6 +302,233 @@ TOOLS: list[dict] = [
             "properties": {},
         },
     },
+    # --- Harness 编排工具 ---
+    {
+        "name": "reqflow_plan",
+        "description": "开始新计划。路由分析、上下文扫描、生成 Execution Skill。Harness 核心工具。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "requirement": {
+                    "type": "string",
+                    "description": "需求文本内容",
+                },
+                "workflow": {
+                    "type": "string",
+                    "description": "Workflow 类型（可选，默认自动选择）",
+                },
+            },
+            "required": ["requirement"],
+        },
+    },
+    {
+        "name": "reqflow_report",
+        "description": "报告阶段完成状态。Agent 每完成一个阶段后调用。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string",
+                    "description": "运行 ID",
+                },
+                "stage": {
+                    "type": "string",
+                    "description": "阶段名称",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["done", "blocked", "timeout", "failed"],
+                    "description": "阶段状态",
+                },
+                "artifacts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "产出文件路径列表",
+                },
+                "error": {
+                    "type": "string",
+                    "description": "错误信息（status 为 blocked/failed 时）",
+                },
+            },
+            "required": ["run_id", "stage", "status"],
+        },
+    },
+    {
+        "name": "reqflow_verify",
+        "description": "请求门禁验证。质量门禁检查。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string",
+                    "description": "运行 ID",
+                },
+                "gate": {
+                    "type": "string",
+                    "enum": ["design-gate", "tdd-gate", "completion-gate", "compliance-report"],
+                    "description": "门禁类型",
+                },
+                "evidence": {
+                    "type": "object",
+                    "description": "验证证据",
+                },
+            },
+            "required": ["run_id", "gate"],
+        },
+    },
+    {
+        "name": "reqflow_accept",
+        "description": "用户验收通过。触发归档流程。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string",
+                    "description": "运行 ID",
+                },
+                "feedback": {
+                    "type": "string",
+                    "description": "用户反馈（可选）",
+                },
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "reqflow_reject",
+        "description": "用户验收拒绝。触发修复循环。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string",
+                    "description": "运行 ID",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "拒绝原因",
+                },
+                "issues": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "问题列表",
+                },
+            },
+            "required": ["run_id", "reason"],
+        },
+    },
+    {
+        "name": "reqflow_tool_call",
+        "description": "调用外部工具。从 tools.yaml 查找定义，通过 MCP 协议调用。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tool_name": {"type": "string", "description": "工具名称"},
+                "method": {"type": "string", "description": "调用方法"},
+                "params": {"type": "object", "description": "参数"},
+            },
+            "required": ["tool_name", "method"],
+        },
+    },
+    {
+        "name": "reqflow_memory_save",
+        "description": "保存长期记忆到 memory.md。记录关键决策、限制、命名规则、模式。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "category": {"type": "string", "enum": ["decision", "constraint", "naming", "pattern"], "description": "分类"},
+                "content": {"type": "string", "description": "记忆内容"},
+                "stage": {"type": "string", "description": "所属阶段"},
+            },
+            "required": ["run_id", "category", "content"],
+        },
+    },
+    {
+        "name": "reqflow_memory_load",
+        "description": "加载 memory.md 全部内容。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "reqflow_git_check",
+        "description": "检查 Git 状态（分支、未提交文件、最后提交）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_dir": {"type": "string", "description": "仓库目录", "default": "."},
+            },
+        },
+    },
+    {
+        "name": "reqflow_blocker_add",
+        "description": "添加 BLOCKER。P0 阻塞（必须关闭），P1 标记（不阻塞），P2 仅记录。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "level": {"type": "string", "enum": ["P0", "P1", "P2"], "description": "BLOCKER 级别"},
+                "question": {"type": "string", "description": "BLOCKER 描述"},
+                "stage": {"type": "string", "description": "所属阶段"},
+            },
+            "required": ["run_id", "level", "question"],
+        },
+    },
+    {
+        "name": "reqflow_blocker_resolve",
+        "description": "解决 BLOCKER。提供答案后关闭。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "blocker_id": {"type": "string", "description": "BLOCKER ID"},
+                "answer": {"type": "string", "description": "解决方案"},
+            },
+            "required": ["run_id", "blocker_id", "answer"],
+        },
+    },
+    {
+        "name": "reqflow_blocker_check",
+        "description": "检查当前 BLOCKER 状态。返回 P0 未关闭数量和全部 BLOCKER 列表。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "过滤阶段（可选）"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "reqflow_multi_repo_switch",
+        "description": "切换多仓库上下文。检测项目中的多个 git 仓库并切换当前工作仓库。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_dir": {"type": "string", "description": "项目根目录", "default": "."},
+                "repo_name": {"type": "string", "description": "目标仓库名称（可选，不指定则列出所有仓库）"},
+            },
+        },
+    },
+    {
+        "name": "reqflow_acceptance_update",
+        "description": "更新验收标准状态。标记单条验收标准为 verified/failed/pending。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "criteria_id": {"type": "string", "description": "验收标准 ID（如 ac-01）"},
+                "status": {"type": "string", "enum": ["verified", "failed", "pending"], "description": "新状态"},
+                "evidence": {"type": "string", "description": "验证证据说明"},
+            },
+            "required": ["run_id", "criteria_id", "status"],
+        },
+    },
 ]
 
 
@@ -310,6 +537,10 @@ TOOLS: list[dict] = [
 
 async def _handle_run(arguments: dict) -> list:
     """处理 reqflow_run 工具调用。"""
+    import json as _json
+    from datetime import datetime as _dt
+    from pathlib import Path as _Path
+
     Engine, RuntimeRegistry = _import_core()
 
     requirement = arguments.get("requirement", "").strip()
@@ -320,26 +551,57 @@ async def _handle_run(arguments: dict) -> list:
     workflow_type = arguments.get("workflow", "flow")
     run_dir = arguments.get("run_dir")
 
+    # Pre-create run directory for failure artifacts
+    if not run_dir:
+        timestamp = _dt.now().strftime("%Y%m%d-%H%M%S")
+        run_dir = f".reqflow/runs/run-{timestamp}"
+    run_path = _Path(run_dir)
+    run_path.mkdir(parents=True, exist_ok=True)
+
+    def _write_failure_state(error_msg: str, stage: str = "init"):
+        state = {
+            "run_id": run_path.name,
+            "workflow": workflow_type,
+            "runtime": runtime_name or "auto",
+            "status": "init_failed",
+            "failed_at": stage,
+            "error": error_msg,
+            "guardrails_loaded": False,
+            "guidelines_loaded": False,
+            "created_at": _dt.now().isoformat(),
+            "updated_at": _dt.now().isoformat(),
+        }
+        (run_path / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
+
     # 选择 runtime
-    try:
-        registry = RuntimeRegistry()
-    except Exception as exc:
-        return [TextContent(type="text", text=f"[错误] 无法加载 runtime 配置: {exc}")]
+    registry = RuntimeRegistry()
 
     if runtime_name:
         try:
             config = registry.get(runtime_name)
         except ValueError as exc:
-            return [TextContent(type="text", text=f"[错误] {exc}")]
+            _write_failure_state(str(exc), "runtime_lookup")
+            return [TextContent(type="text", text=f"[错误] {exc}\n运行目录: {run_dir}")]
     else:
         config = _detect_runtime(registry)
         if config is None:
-            return [TextContent(type="text", text="[错误] 无法自动检测 runtime，请指定 runtime 参数。")]
+            errors = registry.list_errors()
+            detail = f" (配置加载错误: {errors})" if errors else ""
+            _write_failure_state(f"无法自动检测 runtime{detail}", "runtime_detect")
+            return [TextContent(type="text", text=f"[错误] 无法自动检测 runtime，请指定 runtime 参数。\n运行目录: {run_dir}")]
 
     # 可用性检查
     ready, reason = registry.check_readiness(config.name)
     if not ready:
-        return [TextContent(type="text", text=f"[错误] Runtime '{config.name}' 不可用: {reason}")]
+        _write_failure_state(f"Runtime '{config.name}' 不可用: {reason}", "runtime_readiness")
+        return [TextContent(type="text", text=f"[错误] Runtime '{config.name}' 不可用: {reason}\n运行目录: {run_dir}")]
+
+    # Host runtime: generate Execution Skill instead of blocking
+    if config and config.name == "host":
+        return await _handle_plan({
+            "requirement": requirement,
+            "workflow": workflow_type,
+        })
 
     # 选择 workflow（从 YAML 加载）
     steps = _get_workflow_steps(workflow_type)
@@ -350,7 +612,8 @@ async def _handle_run(arguments: dict) -> list:
     try:
         result = await engine.run_workflow(workflow_steps=steps, requirement=requirement)
     except Exception as exc:
-        return [TextContent(type="text", text=f"[错误] Workflow 执行失败: {exc}")]
+        _write_failure_state(str(exc), "workflow_execution")
+        return [TextContent(type="text", text=f"[错误] Workflow 执行失败: {exc}\n运行目录: {run_dir}")]
 
     # 格式化输出
     lines = [
@@ -410,22 +673,23 @@ async def _handle_list_runtimes(_arguments: dict) -> list:
     """处理 reqflow_list_runtimes 工具调用。"""
     _, RuntimeRegistry = _import_core()
 
-    try:
-        registry = RuntimeRegistry()
-    except Exception as exc:
-        return [TextContent(type="text", text=f"[错误] 无法加载 runtime 配置: {exc}")]
+    registry = RuntimeRegistry()
 
     runtimes = registry.list_runtimes()
-    if not runtimes:
-        return [TextContent(type="text", text="未找到任何可用 runtime。")]
+    errors = registry.list_errors()
 
     lines = ["可用 runtime:"]
-    for name in runtimes:
-        try:
+    if runtimes:
+        for name in runtimes:
             config = registry.get(name)
             lines.append(f"  - {name:12s}  {config.display_name}")
-        except Exception:
-            lines.append(f"  - {name:12s}  (配置加载失败)")
+    else:
+        lines.append("  (无)")
+
+    if errors:
+        lines.append("\n加载失败的配置:")
+        for name, err in errors.items():
+            lines.append(f"  - {name:12s}  {err}")
 
     return [TextContent(type="text", text="\n".join(lines))]
 
@@ -577,6 +841,11 @@ async def _handle_dashboard(arguments: dict) -> list:
         "checkpoints": len(data.get("checkpoints", [])),
         "memory_entries": len(data.get("memory", {}).get("short_term", [])),
         "stage_records": data.get("stage_records", []),
+        "reports": data.get("reports", []),
+        "verifications": data.get("verifications", []),
+        "blockers": data.get("blockers", []),
+        "acceptance_criteria": data.get("acceptance_criteria", []),
+        "workflow_status": data.get("status", "unknown"),
     }
 
     output = dashboard.format_status(status)
@@ -760,6 +1029,7 @@ async def _handle_health(_arguments: dict) -> list:
 
     lines = ["=== ReqFlow Health Check ==="]
 
+    # Layer 1: System
     lines.append("\n[System]")
     lines.append(f"  reqflow: OK")
     try:
@@ -768,51 +1038,609 @@ async def _handle_health(_arguments: dict) -> list:
     except ImportError:
         lines.append(f"  mcp: NOT INSTALLED (pip install mcp)")
 
-    lines.append("\n[Runtimes]")
+    # Layer 2: Workflow loader
+    lines.append("\n[Workflow Loader]")
     try:
-        registry = RuntimeRegistry()
+        from reqflow.core.workflow_loader import WorkflowLoader
+        loader = WorkflowLoader()
+        wfs = loader.list_workflows()
+        lines.append(f"  OK — {len(wfs)} workflow(s): {', '.join(wfs)}")
     except Exception as exc:
         lines.append(f"  ERROR: {exc}")
-        registry = None
 
-    if registry:
-        for name in registry.list_runtimes():
+    # Layer 3: Runtime readiness
+    lines.append("\n[Runtimes]")
+    registry = RuntimeRegistry()
+    runtimes = registry.list_runtimes()
+    errors = registry.list_errors()
+
+    if errors:
+        for name, err in errors.items():
+            lines.append(f"  {name:12s}: SKIPPED — {err}")
+
+    if runtimes:
+        for name in runtimes:
             ready, reason = registry.check_readiness(name)
             status = "READY" if ready else "NOT READY"
             line = f"  {name:12s}: {status}"
             if reason:
                 line += f" — {reason}"
             lines.append(line)
-
-        lines.append("\n[Recommended]")
-        for name in registry.list_runtimes():
-            ready, _ = registry.check_readiness(name)
-            if ready and name not in ("manual",):
-                lines.append(f"  {name}")
-                break
-        else:
-            lines.append(f"  manual (no external runtime available)")
     else:
-        lines.append("\n[Recommended]")
-        lines.append(f"  manual")
+        lines.append("  (no runtimes loaded)")
+
+    # Recommended
+    lines.append("\n[Recommended]")
+    for name in runtimes:
+        ready, _ = registry.check_readiness(name)
+        if ready and name not in ("manual",):
+            lines.append(f"  {name}")
+            break
+    else:
+        lines.append(f"  manual (no external runtime available)")
+
+    # Overall verdict
+    any_ready = any(registry.check_readiness(n)[0] for n in runtimes)
+    lines.append("\n[Verdict]")
+    if any_ready:
+        lines.append("  workflow: EXECUTABLE")
+    else:
+        lines.append("  workflow: DEGRADED — only manual runtime available")
 
     return [TextContent(type="text", text="\n".join(lines))]
 
 
-TOOL_HANDLERS = {
-    "reqflow_run": _handle_run,
-    "reqflow_status": _handle_status,
-    "reqflow_list_runtimes": _handle_list_runtimes,
-    "reqflow_run_graph": _handle_run_graph,
-    "reqflow_session_save": _handle_session_save,
-    "reqflow_session_load": _handle_session_load,
-    "reqflow_dashboard": _handle_dashboard,
-    "reqflow_checkpoint": _handle_checkpoint,
-    "reqflow_parallel": _handle_parallel,
-    "reqflow_trace": _handle_trace,
-    "reqflow_guardrails": _handle_guardrails,
-    "reqflow_health": _handle_health,
-}
+# --- Harness 编排工具实现 ---
+
+
+def _resolve_run_dir(run_id: str, run_dir: str | None = None) -> Path:
+    """解析 run 目录路径。支持 .reqflow/runs/ 和 .dev-workflow/runs/ 两种位置。"""
+    if run_dir:
+        p = Path(run_dir)
+        if (p / "state.json").exists():
+            return p
+    for base in (".reqflow/runs", ".dev-workflow/runs"):
+        p = Path(base) / run_id
+        if (p / "state.json").exists():
+            return p
+    # Scan all run dirs for matching internal run_id
+    for base in (".reqflow/runs", ".dev-workflow/runs"):
+        base_path = Path(base)
+        if not base_path.exists():
+            continue
+        for d in base_path.iterdir():
+            sf = d / "state.json"
+            if sf.exists():
+                try:
+                    data = json.loads(sf.read_text(encoding="utf-8"))
+                    if data.get("run_id") == run_id:
+                        return d
+                except Exception:
+                    continue
+    return Path(f".reqflow/runs/{run_id}")
+
+
+def _extract_acceptance_criteria(requirement: str) -> list[dict]:
+    """从需求文本中提取验收标准，生成可追踪的 checklist。"""
+    criteria = []
+    keywords = ["验收标准", "验收条件", "acceptance criteria", "AC:"]
+    lines = requirement.split("\n")
+    in_section = False
+    idx = 0
+    for line in lines:
+        stripped = line.strip()
+        if any(kw in stripped.lower() for kw in keywords):
+            in_section = True
+            continue
+        if in_section and stripped.startswith(("- ", "* ", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.")):
+            text = stripped.lstrip("-*0123456789. ")
+            idx += 1
+            criteria.append({"id": f"ac-{idx:02d}", "description": text, "status": "pending", "evidence": ""})
+        elif in_section and stripped and not stripped.startswith(("- ", "* ")) and not stripped[0:1].isdigit():
+            # 非列表项，可能是新段落，结束验收标准区域
+            if criteria:
+                in_section = False
+    return criteria
+
+
+def _normalize_evidence(gate: str, evidence: dict) -> dict:
+    """将用户传入的 evidence 标准化为 QualityGate 期望的 context key。"""
+    if not evidence:
+        return evidence
+    ctx = dict(evidence)
+
+    # completion-gate 标准化
+    if gate == "completion-gate":
+        # 兼容 build_success / build_passed / mvn_success 等变体
+        for key in ("build_success", "build_passed", "mvn_success", "compile_success"):
+            if key in ctx and "build_success" not in ctx:
+                ctx["build_success"] = ctx[key]
+        for key in ("tests_passing", "tests_passed", "test_pass", "all_tests_pass"):
+            if key in ctx and "tests_passing" not in ctx:
+                ctx["tests_passing"] = ctx[key]
+        for key in ("spec_compliant", "spec_compliance", "spec_ok", "spec_pass"):
+            if key in ctx and "spec_compliant" not in ctx:
+                ctx["spec_compliant"] = ctx[key]
+        for key in ("all_work_items_done", "work_items_done", "all_items_done"):
+            if key in ctx and "all_work_items_done" not in ctx:
+                ctx["all_work_items_done"] = ctx[key]
+        # 支持 completed_items / total_items 从 artifacts 数量推断
+        if "completed_items" not in ctx and "artifacts" in ctx:
+            arts = ctx["artifacts"]
+            if isinstance(arts, list):
+                ctx.setdefault("completed_items", len(arts))
+                ctx.setdefault("total_items", len(arts))
+
+    # tdd-gate 标准化
+    if gate == "tdd-gate":
+        # 兼容 failing_tests_defined / failing_tests 等变体
+        for key in ("failing_tests_defined", "failing_tests", "red_tests", "failing_test_count"):
+            if key in ctx and "failing_tests_count" not in ctx:
+                ctx["failing_tests_count"] = ctx[key]
+        for key in ("test_plan_exists", "test_plan_file", "has_test_plan"):
+            if key in ctx and "test_plan" not in ctx:
+                ctx["test_plan"] = ctx[key]
+        # 支持从文件列表推断
+        if "failing_tests_count" not in ctx and "test_files" in ctx:
+            files = ctx["test_files"]
+            if isinstance(files, list):
+                ctx.setdefault("failing_tests_count", len(files))
+        if "test_plan" not in ctx and "artifacts" in ctx:
+            arts = ctx["artifacts"]
+            if isinstance(arts, list):
+                for art in arts:
+                    if isinstance(art, str) and ("test" in art.lower() or "tdd" in art.lower()):
+                        ctx.setdefault("test_plan", True)
+                        break
+
+    # compliance-report 标准化
+    if gate == "compliance-report":
+        if "evidence" in ctx and isinstance(ctx["evidence"], dict):
+            for k, v in ctx["evidence"].items():
+                ctx.setdefault(k, v)
+
+    # 从字符串 evidence 值推断布尔字段
+    _parse_evidence_values(ctx)
+
+    # completion-gate: 如果 build_success 和 tests_passing 都为 True，
+    # 且 completed_items >= total_items，则推断 spec_compliant 和 all_work_items_done
+    if gate == "completion-gate":
+        if ctx.get("build_success") and ctx.get("tests_passing"):
+            completed = ctx.get("completed_items", 0)
+            total = ctx.get("total_items", 1)
+            if total > 0 and completed >= total:
+                ctx.setdefault("all_work_items_done", True)
+                ctx.setdefault("spec_compliant", True)
+
+    return ctx
+
+
+def _parse_evidence_values(ctx: dict) -> None:
+    """Parse string evidence values to infer boolean gate fields."""
+    indicators = []
+    for v in ctx.values():
+        if isinstance(v, str):
+            indicators.append(v.lower())
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, str):
+                    indicators.append(item.lower())
+        elif isinstance(v, bool):
+            # 布尔值直接作为指标
+            indicators.append(str(v).lower())
+    combined = " ".join(indicators)
+
+    if "build_success" not in ctx:
+        if "build success" in combined or "compile success" in combined or "build success" in combined:
+            ctx["build_success"] = True
+
+    if "tests_passing" not in ctx:
+        if "tests run:" in combined and "failures: 0" in combined:
+            ctx["tests_passing"] = True
+        elif "test pass" in combined or "tests pass" in combined:
+            ctx["tests_passing"] = True
+        elif "true" in combined and ("tests_passing" in ctx or "test" in combined):
+            ctx["tests_passing"] = True
+
+    if "spec_compliant" not in ctx:
+        if "spec" in combined and ("compliant" in combined or "pass" in combined):
+            ctx["spec_compliant"] = True
+        elif "all requirements met" in combined or "requirements met" in combined:
+            ctx["spec_compliant"] = True
+        elif "compliant" in combined and ("true" in combined or "pass" in combined):
+            ctx["spec_compliant"] = True
+
+    if "all_work_items_done" not in ctx:
+        completed = ctx.get("completed_items", 0)
+        total = ctx.get("total_items", 1)
+        if total > 0 and completed >= total:
+            ctx["all_work_items_done"] = True
+        elif "all work items" in combined and ("done" in combined or "complete" in combined):
+            ctx["all_work_items_done"] = True
+        elif "all items" in combined and ("done" in combined or "complete" in combined):
+            ctx["all_work_items_done"] = True
+
+
+async def _handle_plan(arguments: dict) -> list:
+    """处理 reqflow_plan 工具调用。开始新计划。"""
+    from datetime import datetime as _dt
+    from pathlib import Path as _Path
+
+    requirement = arguments.get("requirement", "").strip()
+    if not requirement:
+        return [TextContent(type="text", text="[错误] 需求内容不能为空。")]
+
+    workflow = arguments.get("workflow")
+
+    # 1. 路由分析
+    try:
+        from reqflow.core.router import route_requirement
+        routing = route_requirement(requirement)
+    except Exception as exc:
+        return [TextContent(type="text", text=f"[错误] 路由分析失败: {exc}")]
+
+    # 如果用户指定了 workflow，覆盖建议
+    if workflow:
+        routing.suggested_workflow = workflow
+
+    # 2. 上下文扫描
+    structure_info = ""
+    try:
+        from reqflow.core.context_scanner import scan_project
+        structure = scan_project(".")
+        structure_info = (
+            f"语言: {', '.join(structure.languages.keys()) if structure.languages else '未知'}\n"
+            f"入口: {', '.join(structure.entry_points[:3]) if structure.entry_points else '未发现'}\n"
+            f"测试: {structure.test_framework or '未检测到'}\n"
+            f"构建: {structure.build_system or '未检测到'}"
+        )
+    except Exception:
+        structure_info = "(上下文扫描跳过)"
+
+    # 3. 生成 Execution Skill
+    try:
+        from reqflow.core.skill_generator import generate_execution_skill, save_execution_skill
+        run_id = f"run-{_dt.now().strftime('%Y%m%d-%H%M%S')}"
+        run_dir = f".reqflow/runs/{run_id}"
+
+        skill = generate_execution_skill(
+            run_id=run_id,
+            requirement=requirement,
+            routing=routing,
+        )
+        skill_path = save_execution_skill(skill, run_dir)
+    except Exception as exc:
+        return [TextContent(type="text", text=f"[错误] Execution Skill 生成失败: {exc}")]
+
+    # 4. 创建 state.json（含验收标准追踪）
+    acceptance = _extract_acceptance_criteria(requirement)
+    state = {
+        "run_id": run_id,
+        "requirement": requirement,
+        "routing_level": routing.level.value,
+        "workflow": routing.suggested_workflow,
+        "current_stage": "started",
+        "status": "in_progress",
+        "created_at": _dt.now().isoformat(),
+        "updated_at": _dt.now().isoformat(),
+        "completed_modules": [],
+        "reports": [],
+        "verifications": [],
+        "acceptance_criteria": acceptance,
+        "blockers": [],
+    }
+    state_path = _Path(run_dir) / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    lines = [
+        "=== ReqFlow 计划已创建 ===",
+        f"运行 ID: {run_id}",
+        f"路由级别: {routing.level.value} — {routing.reason}",
+        f"置信度: {routing.confidence:.0%}",
+        f"建议 Workflow: {routing.suggested_workflow}",
+        f"运行目录: {run_dir}",
+        f"Execution Skill: {skill_path}",
+        "",
+        "--- 项目上下文 ---",
+        structure_info,
+        "",
+        "--- 下一步 ---",
+        "请读取 Execution Skill 并按阶段执行:",
+        f"  cat {skill_path}",
+    ]
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_report(arguments: dict) -> list:
+    """处理 reqflow_report 工具调用。报告阶段完成状态。"""
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+    status = arguments.get("status", "")
+    artifacts = arguments.get("artifacts", [])
+    error = arguments.get("error")
+
+    if not run_id or not stage or not status:
+        return [TextContent(type="text", text="[错误] run_id, stage, status 不能为空。")]
+
+    from datetime import datetime as _dt
+
+    # 更新 state.json
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+
+    if not state_path.exists():
+        run_path.mkdir(parents=True, exist_ok=True)
+        state = {
+            "run_id": run_id,
+            "current_stage": stage,
+            "status": "in_progress",
+            "created_at": _dt.now().isoformat(),
+            "updated_at": _dt.now().isoformat(),
+            "completed_modules": [],
+            "reports": [],
+            "verifications": [],
+            "blockers": [],
+        }
+    else:
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except Exception:
+            state = {"run_id": run_id, "reports": [], "completed_modules": [], "verifications": []}
+
+    state["current_stage"] = stage
+    state["updated_at"] = _dt.now().isoformat()
+    if status == "done":
+        state.setdefault("completed_modules", []).append(stage)
+    state.setdefault("reports", []).append({
+        "stage": stage,
+        "status": status,
+        "artifacts": artifacts,
+        "error": error,
+        "timestamp": _dt.now().isoformat(),
+    })
+    state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    lines = [
+        f"阶段报告已记录: {stage}",
+        f"状态: {status}",
+    ]
+    if artifacts:
+        lines.append(f"产出: {', '.join(artifacts)}")
+    if error:
+        lines.append(f"错误: {error}")
+
+    # 下一步指引
+    if status == "done":
+        lines.append("\n下一步: 继续执行下一个阶段")
+    elif status == "blocked":
+        lines.append("\n下一步: 调用 reqflow_status 获取指引")
+    elif status == "failed":
+        lines.append("\n下一步: 检查错误原因，决定是否进入修复循环")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_verify(arguments: dict) -> list:
+    """处理 reqflow_verify 工具调用。门禁验证。"""
+    run_id = arguments.get("run_id", "")
+    gate = arguments.get("gate", "")
+    evidence = arguments.get("evidence", {})
+
+    if not run_id or not gate:
+        return [TextContent(type="text", text="[错误] run_id 和 gate 不能为空。")]
+
+    from datetime import datetime as _dt
+
+    # 标准化 evidence 到 gate 期望的 context key
+    normalized = _normalize_evidence(gate, evidence)
+
+    try:
+        from reqflow.core.quality_gate import QualityGate
+        qg = QualityGate()
+        result = qg.check(gate, normalized)
+    except Exception as exc:
+        return [TextContent(type="text", text=f"[错误] 门禁检查失败: {exc}")]
+
+    # 更新 state.json
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state.setdefault("verifications", []).append({
+                "gate": gate,
+                "passed": result.passed,
+                "summary": result.summary,
+                "evidence": evidence,
+                "timestamp": _dt.now().isoformat(),
+            })
+            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    lines = [
+        f"=== 门禁验证: {gate} ===",
+        f"结果: {'通过' if result.passed else '未通过'}",
+    ]
+
+    if result.passed:
+        lines.append("\n门禁通过，可以进入下一阶段。")
+    else:
+        lines.append("\n门禁未通过，以下项目需要修复:")
+        for item in result.blocking_items:
+            lines.append(f"  - {item.name}: {item.message}")
+        lines.append("\n请修复后重新调用 reqflow_verify。")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_accept(arguments: dict) -> list:
+    """处理 reqflow_accept 工具调用。用户验收通过。"""
+    run_id = arguments.get("run_id", "")
+    feedback = arguments.get("feedback", "")
+
+    if not run_id:
+        return [TextContent(type="text", text="[错误] run_id 不能为空。")]
+
+    from datetime import datetime as _dt
+
+    # 更新 state.json
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["status"] = "accepted"
+            state["current_stage"] = "archived"
+            state["updated_at"] = _dt.now().isoformat()
+            state["user_feedback"] = feedback
+            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    lines = [
+        "=== 用户验收通过 ===",
+        f"运行 ID: {run_id}",
+        "状态: 已归档",
+    ]
+    if feedback:
+        lines.append(f"反馈: {feedback}")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_reject(arguments: dict) -> list:
+    """处理 reqflow_reject 工具调用。用户验收拒绝。"""
+    run_id = arguments.get("run_id", "")
+    reason = arguments.get("reason", "")
+    issues = arguments.get("issues", [])
+
+    if not run_id or not reason:
+        return [TextContent(type="text", text="[错误] run_id 和 reason 不能为空。")]
+
+    from datetime import datetime as _dt
+
+    # 更新 state.json
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["status"] = "rejected"
+            state["current_stage"] = "repair"
+            state["updated_at"] = _dt.now().isoformat()
+            state.setdefault("rejections", []).append({
+                "reason": reason,
+                "issues": issues,
+                "timestamp": _dt.now().isoformat(),
+            })
+            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    lines = [
+        "=== 用户验收拒绝 ===",
+        f"运行 ID: {run_id}",
+        f"原因: {reason}",
+    ]
+    if issues:
+        lines.append("问题列表:")
+        for issue in issues:
+            lines.append(f"  - {issue}")
+
+    lines.append("\n下一步: 回到实现阶段修复问题，然后重新提交验证。")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+
+# --- V3 新增工具实现 ---
+
+
+async def _handle_tool_call(arguments: dict) -> list:
+    """处理 reqflow_tool_call 工具调用。"""
+    tool_name = arguments.get("tool_name", "")
+    method = arguments.get("method", "")
+    params = arguments.get("params", {})
+
+    if not tool_name or not method:
+        return [TextContent(type="text", text="[错误] tool_name 和 method 不能为空。")]
+
+    from reqflow.core.tool_bridge_mcp import ToolBridgeMCP
+    bridge = ToolBridgeMCP()
+    bridge.load_config()
+
+    result = bridge.call(tool_name, method, params)
+    if result.success:
+        return [TextContent(type="text", text=f"[{tool_name}] {method}: {result.output}")]
+    else:
+        return [TextContent(type="text", text=f"[错误] {tool_name}.{method} 失败: {result.error}")]
+
+
+async def _handle_memory_save(arguments: dict) -> list:
+    """处理 reqflow_memory_save 工具调用。"""
+    run_id = arguments.get("run_id", "")
+    category = arguments.get("category", "")
+    content = arguments.get("content", "")
+    stage = arguments.get("stage", "")
+
+    if not run_id or not category or not content:
+        return [TextContent(type="text", text="[错误] run_id, category, content 不能为空。")]
+
+    from reqflow.core.memory_manager import MemoryManager
+    run_path = _resolve_run_dir(run_id)
+    memory_path = str(run_path / "memory.md")
+    mm = MemoryManager(memory_path)
+    mm.load_from_file()
+    mm.save(category, content, stage)
+    mm.save_to_file()
+
+    return [TextContent(type="text", text=f"记忆已保存: [{category}] {content[:50]}...")]
+
+
+async def _handle_memory_load(arguments: dict) -> list:
+    """处理 reqflow_memory_load 工具调用。"""
+    run_id = arguments.get("run_id", "")
+
+    if not run_id:
+        return [TextContent(type="text", text="[错误] run_id 不能为空。")]
+
+    from reqflow.core.memory_manager import MemoryManager
+    run_path = _resolve_run_dir(run_id)
+    memory_path = str(run_path / "memory.md")
+    mm = MemoryManager(memory_path)
+    mm.load_from_file()
+
+    md = mm.export_markdown()
+    return [TextContent(type="text", text=md)]
+
+
+async def _handle_git_check(arguments: dict) -> list:
+    """处理 reqflow_git_check 工具调用。"""
+    run_dir = arguments.get("run_dir", ".")
+
+    from reqflow.core.git_workflow import GitWorkflow
+    gw = GitWorkflow(run_dir)
+    status = gw.check_branch()
+    uncommitted = gw.check_uncommitted()
+
+    lines = [
+        f"当前分支: {status.current_branch}",
+        f"保护分支: {'是' if status.is_protected else '否'}",
+        f"最后提交: {status.last_commit}",
+    ]
+    if uncommitted:
+        lines.append(f"未提交文件 ({len(uncommitted)}):")
+        for f in uncommitted[:10]:
+            lines.append(f"  {f}")
+    else:
+        lines.append("未提交文件: 无")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -837,22 +1665,213 @@ def _detect_runtime(registry) -> object | None:
         except ValueError:
             continue
 
+
+
+async def _handle_blocker_add(arguments: dict) -> list:
+    """处理 reqflow_blocker_add 工具调用。"""
+    import json as _json
+    from pathlib import Path as _Path
+    from datetime import datetime as _dt
+
+    run_id = arguments.get("run_id", "")
+    level = arguments.get("level", "P0")
+    question = arguments.get("question", "")
+    stage = arguments.get("stage", "")
+
+    if not run_id or not question:
+        return [TextContent(type="text", text="[错误] run_id 和 question 不能为空。")]
+
+    from reqflow.core.blocker_manager import BlockerManager, BlockerLevel
+    bm = BlockerManager()
+
+    # Load existing blockers from state file
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+    if state_path.exists():
+        with open(state_path) as f:
+            state = _json.load(f)
+        bm.load_from_list(state.get("blockers", []))
+
+    level_map = {"P0": BlockerLevel.P0, "P1": BlockerLevel.P1, "P2": BlockerLevel.P2}
+    blocker_level = level_map.get(level, BlockerLevel.P0)
+
+    blocker = bm.add(blocker_level, question, stage)
+
+    # Save back to state file
+    run_path.mkdir(parents=True, exist_ok=True)
+    state = {}
+    if state_path.exists():
+        with open(state_path) as f:
+            state = _json.load(f)
+    state["blockers"] = bm.to_list()
+    state["updated_at"] = _dt.now().isoformat()
+    with open(state_path, "w") as f:
+        _json.dump(state, f, indent=2)
+
+    return [TextContent(type="text", text=f"BLOCKER 已添加: [{blocker.level.value}] {blocker.id} — {blocker.question}")]
+
+
+async def _handle_blocker_resolve(arguments: dict) -> list:
+    """处理 reqflow_blocker_resolve 工具调用。"""
+    import json as _json
+    from pathlib import Path as _Path
+
+    run_id = arguments.get("run_id", "")
+    blocker_id = arguments.get("blocker_id", "")
+    answer = arguments.get("answer", "")
+
+    if not run_id or not blocker_id or not answer:
+        return [TextContent(type="text", text="[错误] run_id, blocker_id, answer 不能为空。")]
+
+    from reqflow.core.blocker_manager import BlockerManager
+    from datetime import datetime as _dt
+    bm = BlockerManager()
+
+    # Load existing blockers
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+    if state_path.exists():
+        with open(state_path) as f:
+            state = _json.load(f)
+        bm.load_from_list(state.get("blockers", []))
+
     try:
-        return registry.get("manual")
-    except ValueError:
-        pass
+        success = bm.resolve(blocker_id, answer)
+        if success:
+            state = {}
+            if state_path.exists():
+                with open(state_path) as f:
+                    state = _json.load(f)
+            state["blockers"] = bm.to_list()
+            state["updated_at"] = _dt.now().isoformat()
+            with open(state_path, "w") as f:
+                _json.dump(state, f, indent=2)
+            return [TextContent(type="text", text=f"BLOCKER 已解决: {blocker_id} — {answer}")]
+        else:
+            return [TextContent(type="text", text=f"[错误] BLOCKER {blocker_id} 未找到")]
+    except ValueError as e:
+        return [TextContent(type="text", text=f"[错误] {e}")]
 
-    for name in ("claude", "gpt", "gemini", "deepseek"):
-        try:
-            config = registry.get(name)
-            if config.env_key and os.environ.get(config.env_key):
-                return config
-            if config.api_key:
-                return config
-        except ValueError:
-            continue
 
-    return None
+async def _handle_blocker_check(arguments: dict) -> list:
+    """处理 reqflow_blocker_check 工具调用。"""
+    import json as _json
+    from pathlib import Path as _Path
+
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+
+    if not run_id:
+        return [TextContent(type="text", text="[错误] run_id 不能为空。")]
+
+    from reqflow.core.blocker_manager import BlockerManager
+    bm = BlockerManager()
+
+    # Load existing blockers
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+    if state_path.exists():
+        with open(state_path) as f:
+            state = _json.load(f)
+        bm.load_from_list(state.get("blockers", []))
+
+    open_p0 = bm.get_open_p0()
+    all_blockers = bm.to_list()
+
+    lines = [f"P0 未关闭: {len(open_p0)}"]
+    if stage:
+        filtered = [b for b in all_blockers if b.get("stage") == stage]
+        lines.append(f"阶段 [{stage}] BLOCKER: {len(filtered)}")
+        for b in filtered:
+            lines.append(f"  [{b['level']}] {b['id']}: {b['question']} ({b['status']})")
+    else:
+        lines.append(f"全部 BLOCKER: {len(all_blockers)}")
+        for b in all_blockers:
+            lines.append(f"  [{b['level']}] {b['id']}: {b['question']} ({b['status']})")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
+async def _handle_acceptance_update(arguments: dict) -> list:
+    """处理 reqflow_acceptance_update 工具调用。更新验收标准状态。"""
+    import json as _json
+    from pathlib import Path as _Path
+    from datetime import datetime as _dt
+
+    run_id = arguments.get("run_id", "")
+    criteria_id = arguments.get("criteria_id", "")
+    new_status = arguments.get("status", "")
+    evidence = arguments.get("evidence", "")
+
+    if not run_id or not criteria_id or not new_status:
+        return [TextContent(type="text", text="[错误] run_id, criteria_id, status 不能为空。")]
+
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+    if not state_path.exists():
+        return [TextContent(type="text", text=f"[错误] 未找到运行状态: {run_id}")]
+
+    with open(state_path) as f:
+        state = _json.load(f)
+
+    criteria = state.get("acceptance_criteria", [])
+    found = False
+    # 支持大小写不敏感匹配 (AC-01, ac-01, Ac-01)
+    criteria_id_lower = criteria_id.lower()
+    for c in criteria:
+        if c.get("id", "").lower() == criteria_id_lower:
+            c["status"] = new_status
+            if evidence:
+                c["evidence"] = evidence
+            found = True
+            break
+
+    if not found:
+        # 如果验收标准列表为空或未找到，自动创建该标准
+        if not criteria:
+            criteria = []
+        new_criteria = {"id": criteria_id.lower(), "description": f"验收标准 {criteria_id}", "status": new_status, "evidence": evidence or ""}
+        criteria.append(new_criteria)
+        state["acceptance_criteria"] = criteria
+        state["updated_at"] = _dt.now().isoformat()
+        with open(state_path, "w") as f:
+            _json.dump(state, f, indent=2, ensure_ascii=False)
+        verified = sum(1 for c in criteria if c.get("status") == "verified")
+        return [TextContent(type="text", text=f"验收标准 {criteria_id} 已创建并更新为 {new_status}。进度: {verified}/{len(criteria)} verified")]
+
+    state["acceptance_criteria"] = criteria
+    state["updated_at"] = _dt.now().isoformat()
+    with open(state_path, "w") as f:
+        _json.dump(state, f, indent=2)
+
+    verified = sum(1 for c in criteria if c.get("status") == "verified")
+    return [TextContent(type="text", text=f"验收标准 {criteria_id} 已更新为 {new_status}。进度: {verified}/{len(criteria)} verified")]
+
+
+async def _handle_multi_repo_switch(arguments: dict) -> list:
+    """处理 reqflow_multi_repo_switch 工具调用。"""
+    project_dir = arguments.get("project_dir", ".")
+    repo_name = arguments.get("repo_name", "")
+
+    from reqflow.core.multi_repo import MultiRepo
+    mr = MultiRepo(project_dir)
+    repos = mr.detect_repos()
+
+    if not repos:
+        return [TextContent(type="text", text="未检测到 git 仓库。")]
+
+    if not repo_name:
+        lines = ["检测到的仓库:"]
+        for r in repos:
+            current = " (当前)" if r == mr.get_current_repo() else ""
+            lines.append(f"  - {r.name}: {r.path} [{r.branch}]{current}")
+        return [TextContent(type="text", text="\n".join(lines))]
+
+    try:
+        repo = mr.switch_repo(repo_name)
+        return [TextContent(type="text", text=f"已切换到仓库: {repo.name} ({repo.path}) [{repo.branch}]")]
+    except ValueError as e:
+        return [TextContent(type="text", text=f"[错误] {e}")]
 
 
 # ---------------------------------------------------------------------------
@@ -905,6 +1924,40 @@ def main() -> None:
         sys.exit(1)
 
     asyncio.run(_run_server())
+
+
+
+TOOL_HANDLERS = {
+    "reqflow_run": _handle_run,
+    "reqflow_status": _handle_status,
+    "reqflow_list_runtimes": _handle_list_runtimes,
+    "reqflow_run_graph": _handle_run_graph,
+    "reqflow_session_save": _handle_session_save,
+    "reqflow_session_load": _handle_session_load,
+    "reqflow_dashboard": _handle_dashboard,
+    "reqflow_checkpoint": _handle_checkpoint,
+    "reqflow_parallel": _handle_parallel,
+    "reqflow_trace": _handle_trace,
+    "reqflow_guardrails": _handle_guardrails,
+    "reqflow_health": _handle_health,
+    # --- Harness 编排工具 ---
+    "reqflow_plan": _handle_plan,
+    "reqflow_report": _handle_report,
+    "reqflow_verify": _handle_verify,
+    "reqflow_accept": _handle_accept,
+    "reqflow_reject": _handle_reject,
+    # --- V3 新增工具 ---
+    "reqflow_tool_call": _handle_tool_call,
+    "reqflow_memory_save": _handle_memory_save,
+    "reqflow_memory_load": _handle_memory_load,
+    "reqflow_git_check": _handle_git_check,
+    # --- V3 BLOCKER 和多仓库工具 ---
+    "reqflow_blocker_add": _handle_blocker_add,
+    "reqflow_blocker_resolve": _handle_blocker_resolve,
+    "reqflow_blocker_check": _handle_blocker_check,
+    "reqflow_multi_repo_switch": _handle_multi_repo_switch,
+    "reqflow_acceptance_update": _handle_acceptance_update,
+}
 
 
 if __name__ == "__main__":
