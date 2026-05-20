@@ -85,11 +85,12 @@ class RunState:
 class StateManager:
     """Manages run state, checkpoints, session, and memory."""
 
-    def __init__(self, run_dir: str):
+    def __init__(self, run_dir: str, run_id: str | None = None):
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoint_dir = self.run_dir / "checkpoints"
         self.checkpoint_dir.mkdir(exist_ok=True)
+        self._run_id = run_id
         self._state: RunState | None = None
 
     @property
@@ -111,7 +112,7 @@ class StateManager:
         if state_file.exists():
             data = json.loads(state_file.read_text())
             return self._from_dict(data)
-        return RunState()
+        return RunState(run_id=self._run_id) if self._run_id else RunState()
 
     def _from_dict(self, data: dict) -> RunState:
         """Reconstruct RunState from a dict."""

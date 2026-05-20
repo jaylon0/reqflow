@@ -596,6 +596,13 @@ async def _handle_run(arguments: dict) -> list:
         _write_failure_state(f"Runtime '{config.name}' 不可用: {reason}", "runtime_readiness")
         return [TextContent(type="text", text=f"[错误] Runtime '{config.name}' 不可用: {reason}\n运行目录: {run_dir}")]
 
+    # Host runtime: generate Execution Skill instead of blocking
+    if config and config.name == "host":
+        return await _handle_plan({
+            "requirement": requirement,
+            "workflow": workflow_type,
+        })
+
     # 选择 workflow（从 YAML 加载）
     steps = _get_workflow_steps(workflow_type)
 
@@ -1096,6 +1103,20 @@ def _resolve_run_dir(run_id: str, run_dir: str | None = None) -> Path:
         p = Path(base) / run_id
         if (p / "state.json").exists():
             return p
+    # Scan all run dirs for matching internal run_id
+    for base in (".reqflow/runs", ".dev-workflow/runs"):
+        base_path = Path(base)
+        if not base_path.exists():
+            continue
+        for d in base_path.iterdir():
+            sf = d / "state.json"
+            if sf.exists():
+                try:
+                    data = json.loads(sf.read_text(encoding="utf-8"))
+                    if data.get("run_id") == run_id:
+                        return d
+                except Exception:
+                    continue
     return Path(f".reqflow/runs/{run_id}")
 
 
@@ -1153,7 +1174,41 @@ def _normalize_evidence(gate: str, evidence: dict) -> dict:
             for k, v in ctx["evidence"].items():
                 ctx.setdefault(k, v)
 
+    # 从字符串 evidence 值推断布尔字段
+    _parse_evidence_values(ctx)
+
     return ctx
+
+
+def _parse_evidence_values(ctx: dict) -> None:
+    """Parse string evidence values to infer boolean gate fields."""
+    indicators = []
+    for v in ctx.values():
+        if isinstance(v, str):
+            indicators.append(v.lower())
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, str):
+                    indicators.append(item.lower())
+    combined = " ".join(indicators)
+
+    if "build_success" not in ctx:
+        if "build success" in combined or "compile success" in combined:
+            ctx["build_success"] = True
+
+    if "tests_passing" not in ctx:
+        if "tests run:" in combined and "failures: 0" in combined:
+            ctx["tests_passing"] = True
+        elif "test pass" in combined or "tests pass" in combined:
+            ctx["tests_passing"] = True
+
+    if "spec_compliant" not in ctx:
+        if "spec" in combined and ("compliant" in combined or "pass" in combined):
+            ctx["spec_compliant"] = True
+
+    if "all_work_items_done" not in ctx:
+        if ctx.get("completed_items", 0) >= ctx.get("total_items", 1):
+            ctx["all_work_items_done"] = True
 
 
 async def _handle_plan(arguments: dict) -> list:
@@ -1264,23 +1319,38 @@ async def _handle_report(arguments: dict) -> list:
     # 更新 state.json
     run_path = _resolve_run_dir(run_id)
     state_path = run_path / "state.json"
-    if state_path.exists():
+
+    if not state_path.exists():
+        run_path.mkdir(parents=True, exist_ok=True)
+        state = {
+            "run_id": run_id,
+            "current_stage": stage,
+            "status": "in_progress",
+            "created_at": _dt.now().isoformat(),
+            "updated_at": _dt.now().isoformat(),
+            "completed_modules": [],
+            "reports": [],
+            "verifications": [],
+            "blockers": [],
+        }
+    else:
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
-            state["current_stage"] = stage
-            state["updated_at"] = _dt.now().isoformat()
-            if status == "done":
-                state.setdefault("completed_modules", []).append(stage)
-            state.setdefault("reports", []).append({
-                "stage": stage,
-                "status": status,
-                "artifacts": artifacts,
-                "error": error,
-                "timestamp": _dt.now().isoformat(),
-            })
-            state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception:
-            pass
+            state = {"run_id": run_id, "reports": [], "completed_modules": [], "verifications": []}
+
+    state["current_stage"] = stage
+    state["updated_at"] = _dt.now().isoformat()
+    if status == "done":
+        state.setdefault("completed_modules", []).append(stage)
+    state.setdefault("reports", []).append({
+        "stage": stage,
+        "status": status,
+        "artifacts": artifacts,
+        "error": error,
+        "timestamp": _dt.now().isoformat(),
+    })
+    state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
     lines = [
         f"阶段报告已记录: {stage}",

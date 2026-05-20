@@ -55,7 +55,7 @@ class Engine:
 
         self.tool_bridge = ToolBridge(config)
         self.context_adapter = ContextAdapter(config)
-        self.state_manager = StateManager(self.run_dir)
+        self.state_manager = StateManager(self.run_dir, run_id=self.run_id)
         self.tracer = Tracer(self.run_id, output_dir=os.path.join(self.run_dir, "traces"))
         self.guardrails = Guardrails()
         self.workflow_loader = WorkflowLoader(workflows_dir)
