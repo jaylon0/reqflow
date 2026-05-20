@@ -199,6 +199,12 @@ TOOLS: list[dict] = [
                     "type": "string",
                     "description": "运行目录路径",
                 },
+                "detail": {
+                    "type": "string",
+                    "enum": ["summary", "full"],
+                    "description": "摘要模式或完整模式（包含 reports/verifications/blockers/acceptance_criteria 详情）",
+                    "default": "summary",
+                },
             },
             "required": ["run_dir"],
         },
@@ -337,8 +343,8 @@ TOOLS: list[dict] = [
                 },
                 "status": {
                     "type": "string",
-                    "enum": ["done", "blocked", "timeout", "failed"],
-                    "description": "阶段状态",
+                    "enum": ["done", "blocked", "timeout", "failed", "conditional"],
+                    "description": "阶段状态。conditional 表示有条件通过，附带风险说明",
                 },
                 "artifacts": {
                     "type": "array",
@@ -348,6 +354,11 @@ TOOLS: list[dict] = [
                 "error": {
                     "type": "string",
                     "description": "错误信息（status 为 blocked/failed 时）",
+                },
+                "risks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "风险项（status 为 conditional 时列出残留风险）",
                 },
             },
             "required": ["run_id", "stage", "status"],
@@ -805,21 +816,31 @@ async def _handle_dashboard(arguments: dict) -> list:
     from reqflow.runner.dashboard import Dashboard
 
     run_dir = arguments.get("run_dir", "")
+    detail = arguments.get("detail", "summary")
     if not run_dir:
         return [TextContent(type="text", text="[错误] run_dir 不能为空。")]
 
     dashboard = Dashboard(run_dir=run_dir)
 
-    # 读取 state.json
+    # 读取 state.json，如果不存在则尝试 acceptance.json
     state_file = Path(run_dir) / "state.json"
-    if not state_file.exists():
-        return [TextContent(type="text", text=f"[错误] 未找到状态文件: {state_file}")]
+    acceptance_file = Path(run_dir) / "acceptance.json"
 
-    try:
-        import json
-        data = json.loads(state_file.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return [TextContent(type="text", text=f"[错误] 无法读取状态文件: {exc}")]
+    data = {}
+    if state_file.exists():
+        try:
+            import json
+            data = json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return [TextContent(type="text", text=f"[错误] 无法读取状态文件: {exc}")]
+    elif acceptance_file.exists():
+        try:
+            import json
+            data = json.loads(acceptance_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return [TextContent(type="text", text=f"[错误] 无法读取验收文件: {exc}")]
+    else:
+        return [TextContent(type="text", text=f"[错误] 未找到状态文件: {state_file}\n也未找到验收文件: {acceptance_file}")]
 
     # Build step_statuses from stage_records
     step_statuses = {}
@@ -849,6 +870,55 @@ async def _handle_dashboard(arguments: dict) -> list:
     }
 
     output = dashboard.format_status(status)
+
+    # 详细模式：追加 reports、verifications、blockers、acceptance_criteria 详情
+    if detail == "full":
+        extra = []
+
+        reports = data.get("reports", [])
+        if reports:
+            extra.append("\n=== 阶段报告 ===")
+            for r in reports:
+                stage = r.get("stage", "?")
+                st = r.get("status", "?")
+                risks = r.get("risks", [])
+                risk_str = f" | 风险: {', '.join(risks)}" if risks else ""
+                extra.append(f"  [{st}] {stage}{risk_str}")
+                if r.get("error"):
+                    extra.append(f"    错误: {r['error']}")
+
+        verifications = data.get("verifications", [])
+        if verifications:
+            extra.append("\n=== 门禁验证 ===")
+            for v in verifications:
+                gate = v.get("gate", "?")
+                passed = v.get("passed", False)
+                extra.append(f"  [{'PASS' if passed else 'FAIL'}] {gate}")
+                if v.get("summary"):
+                    extra.append(f"    {v['summary']}")
+
+        blockers = data.get("blockers", [])
+        if blockers:
+            extra.append("\n=== BLOCKER ===")
+            for b in blockers:
+                bid = b.get("id", "?")
+                level = b.get("level", "?")
+                status_b = b.get("status", "open")
+                question = b.get("question", "?")
+                extra.append(f"  [{level}] {bid} ({status_b}): {question}")
+
+        criteria = data.get("acceptance_criteria", [])
+        if criteria:
+            extra.append("\n=== 验收标准 ===")
+            for c in criteria:
+                cid = c.get("id", "?")
+                st = c.get("status", "pending")
+                desc = c.get("description", "?")
+                extra.append(f"  [{st}] {cid}: {desc}")
+
+        if extra:
+            output += "\n" + "\n".join(extra)
+
     return [TextContent(type="text", text=output)]
 
 
@@ -999,15 +1069,25 @@ async def _handle_trace(arguments: dict) -> list:
 
 async def _handle_guardrails(arguments: dict) -> list:
     """处理 reqflow_guardrails 工具调用。"""
-    from reqflow.core.guardrails import Guardrails, check_file_boundary, check_constitution
+    from reqflow.core.guardrails import Guardrails, Constraint, Severity, check_file_boundary, check_constitution
 
     context = arguments.get("context", {})
     if not context:
         return [TextContent(type="text", text="[错误] context 不能为空。")]
 
     guardrails = Guardrails(constraints=[])
-    guardrails.add_constraint(check_file_boundary)
-    guardrails.add_constraint(check_constitution)
+    guardrails.add_constraint(Constraint(
+        name="file_boundary",
+        description="检查文件编辑是否在授权范围内",
+        severity=Severity.ERROR,
+        check_fn=check_file_boundary,
+    ))
+    guardrails.add_constraint(Constraint(
+        name="constitution",
+        description="检查项目级不可违反规则",
+        severity=Severity.FATAL,
+        check_fn=check_constitution,
+    ))
 
     try:
         violations = await guardrails.check(context)
@@ -1176,7 +1256,12 @@ def _normalize_evidence(gate: str, evidence: dict) -> dict:
         # 兼容 failing_tests_defined / failing_tests 等变体
         for key in ("failing_tests_defined", "failing_tests", "red_tests", "failing_test_count"):
             if key in ctx and "failing_tests_count" not in ctx:
-                ctx["failing_tests_count"] = ctx[key]
+                val = ctx[key]
+                # list 自动转换为 count
+                if isinstance(val, list):
+                    ctx["failing_tests_count"] = len(val)
+                else:
+                    ctx["failing_tests_count"] = val
         for key in ("test_plan_exists", "test_plan_file", "has_test_plan"):
             if key in ctx and "test_plan" not in ctx:
                 ctx["test_plan"] = ctx[key]
@@ -1259,6 +1344,36 @@ def _parse_evidence_values(ctx: dict) -> None:
             ctx["all_work_items_done"] = True
         elif "all items" in combined and ("done" in combined or "complete" in combined):
             ctx["all_work_items_done"] = True
+
+
+def _get_gate_evidence_schema(gate: str) -> dict | None:
+    """返回门禁期望的 evidence schema，帮助 Agent 构造正确的 evidence。"""
+    schemas = {
+        "design-gate": {
+            "meta_spec": "str (truthy) — Meta Spec 内容或路径",
+            "feature_spec": "str (truthy) — Feature Spec 内容或路径",
+            "tech_plan_stages": "int >= 2 — 技术方案阶段数",
+            "completeness_checked": "bool — 是否完成完备性检查",
+            "high_risk_approved": "bool (可选, 默认 True) — 高风险决策是否已批准",
+        },
+        "tdd-gate": {
+            "failing_tests_count": "int > 0 — 失败测试数量（也接受 list 自动转换）",
+            "test_plan": "bool (truthy) — 测试计划是否存在",
+        },
+        "completion-gate": {
+            "build_success": "bool — 构建是否成功",
+            "tests_passing": "bool — 测试是否全部通过",
+            "spec_compliant": "bool — 是否通过 Spec 合规审查",
+            "completed_items": "int — 已完成工作项数",
+            "total_items": "int — 总工作项数",
+        },
+        "compliance-report": {
+            "verification_evidence": "str (truthy) — 验证证据",
+            "review_evidence": "str (truthy) — 审查证据",
+            "test_evidence": "str (truthy) — 测试证据",
+        },
+    }
+    return schemas.get(gate)
 
 
 async def _handle_plan(arguments: dict) -> list:
@@ -1360,6 +1475,7 @@ async def _handle_report(arguments: dict) -> list:
     status = arguments.get("status", "")
     artifacts = arguments.get("artifacts", [])
     error = arguments.get("error")
+    risks = arguments.get("risks", [])
 
     if not run_id or not stage or not status:
         return [TextContent(type="text", text="[错误] run_id, stage, status 不能为空。")]
@@ -1391,15 +1507,18 @@ async def _handle_report(arguments: dict) -> list:
 
     state["current_stage"] = stage
     state["updated_at"] = _dt.now().isoformat()
-    if status == "done":
+    if status in ("done", "conditional"):
         state.setdefault("completed_modules", []).append(stage)
-    state.setdefault("reports", []).append({
+    report_entry = {
         "stage": stage,
         "status": status,
         "artifacts": artifacts,
         "error": error,
         "timestamp": _dt.now().isoformat(),
-    })
+    }
+    if risks:
+        report_entry["risks"] = risks
+    state.setdefault("reports", []).append(report_entry)
     state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
     lines = [
@@ -1410,10 +1529,14 @@ async def _handle_report(arguments: dict) -> list:
         lines.append(f"产出: {', '.join(artifacts)}")
     if error:
         lines.append(f"错误: {error}")
+    if risks:
+        lines.append(f"残留风险: {', '.join(risks)}")
 
     # 下一步指引
     if status == "done":
         lines.append("\n下一步: 继续执行下一个阶段")
+    elif status == "conditional":
+        lines.append("\n下一步: 有条件通过。残留风险已记录，继续执行下一个阶段。建议在最终报告中汇总所有 conditional 风险。")
     elif status == "blocked":
         lines.append("\n下一步: 调用 reqflow_status 获取指引")
     elif status == "failed":
@@ -1471,6 +1594,11 @@ async def _handle_verify(arguments: dict) -> list:
         lines.append("\n门禁未通过，以下项目需要修复:")
         for item in result.blocking_items:
             lines.append(f"  - {item.name}: {item.message}")
+        # 返回 expected evidence schema 帮助 Agent 构造正确的 evidence
+        expected = _get_gate_evidence_schema(gate)
+        if expected:
+            lines.append(f"\n期望的 evidence 格式:")
+            lines.append(json.dumps(expected, indent=2, ensure_ascii=False))
         lines.append("\n请修复后重新调用 reqflow_verify。")
 
     return [TextContent(type="text", text="\n".join(lines))]
@@ -1489,6 +1617,7 @@ async def _handle_accept(arguments: dict) -> list:
     # 更新 state.json
     run_path = _resolve_run_dir(run_id)
     state_path = run_path / "state.json"
+    state = {}
     if state_path.exists():
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -1500,13 +1629,43 @@ async def _handle_accept(arguments: dict) -> list:
         except Exception:
             pass
 
+    # 写入 acceptance.json 作为独立的验收记录（不依赖 state.json）
+    try:
+        acceptance = {
+            "run_id": run_id,
+            "status": "accepted",
+            "feedback": feedback,
+            "accepted_at": _dt.now().isoformat(),
+            "stage_records": state.get("reports", []),
+            "verifications": state.get("verifications", []),
+            "blockers": state.get("blockers", []),
+            "acceptance_criteria": state.get("acceptance_criteria", []),
+        }
+        acceptance_path = run_path / "acceptance.json"
+        acceptance_path.write_text(json.dumps(acceptance, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+    # 扫描目录中的产物文件
+    artifacts = []
+    try:
+        for f in sorted(run_path.iterdir()):
+            if f.is_file() and f.name != "state.json":
+                artifacts.append(f.name)
+    except Exception:
+        pass
+
     lines = [
         "=== 用户验收通过 ===",
         f"运行 ID: {run_id}",
+        f"归档路径: {run_path}",
         "状态: 已归档",
     ]
     if feedback:
         lines.append(f"反馈: {feedback}")
+    if artifacts:
+        lines.append(f"保留的产物: {', '.join(artifacts)}")
+    lines.append("\n所有运行产物已保留在归档路径中，可随时回看。")
 
     return [TextContent(type="text", text="\n".join(lines))]
 
