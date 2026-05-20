@@ -32,6 +32,14 @@ class Blocker:
     resolved_at: str = ""
 
 
+@dataclass
+class BlockerGateResult:
+    """BLOCKER 门禁检查结果。"""
+    passed: bool
+    open_p0_count: int = 0
+    blockers: list[Blocker] = field(default_factory=list)
+
+
 class BlockerManager:
     """管理 BLOCKER 的增删改查。"""
 
