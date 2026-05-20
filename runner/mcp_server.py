@@ -2034,57 +2034,8 @@ async def _handle_multi_repo_switch(arguments: dict) -> list:
 
 
 # ---------------------------------------------------------------------------
-# 入口点
+# 工具处理器注册表（必须在 create_server 之前定义）
 # ---------------------------------------------------------------------------
-
-
-def create_server() -> "Server":
-    """创建并配置 MCP Server 实例。"""
-    server = Server("reqflow")
-
-    @server.list_tools()
-    async def list_tools() -> list[Tool]:
-        return [
-            Tool(
-                name=t["name"],
-                description=t["description"],
-                inputSchema=t["inputSchema"],
-            )
-            for t in TOOLS
-        ]
-
-    @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list:
-        handler = TOOL_HANDLERS.get(name)
-        if handler is None:
-            return [TextContent(type="text", text=f"[错误] 未知工具: {name}")]
-        return await handler(arguments)
-
-    return server
-
-
-async def _run_server() -> None:
-    """启动 MCP Server（stdio 传输）。"""
-    server = create_server()
-
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
-
-
-def main() -> None:
-    """MCP Server 入口。"""
-    if not MCP_AVAILABLE:
-        print(
-            "[错误] MCP 依赖未安装。请先安装:\n"
-            "  pip install mcp\n\n"
-            "MCP Server 是可选功能，不影响 reqflow CLI 的使用。",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    asyncio.run(_run_server())
-
-
 
 TOOL_HANDLERS = {
     "reqflow_run": _handle_run,
@@ -2117,6 +2068,66 @@ TOOL_HANDLERS = {
     "reqflow_multi_repo_switch": _handle_multi_repo_switch,
     "reqflow_acceptance_update": _handle_acceptance_update,
 }
+
+
+# ---------------------------------------------------------------------------
+# 入口点
+# ---------------------------------------------------------------------------
+
+
+def create_server() -> "Server":
+    """创建并配置 MCP Server 实例。"""
+    server = Server("reqflow")
+
+    @server.list_tools()
+    async def list_tools() -> list[Tool]:
+        return [
+            Tool(
+                name=t["name"],
+                description=t["description"],
+                inputSchema=t["inputSchema"],
+            )
+            for t in TOOLS
+        ]
+
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict) -> list:
+        handler = TOOL_HANDLERS.get(name)
+        if handler is None:
+            return [TextContent(type="text", text=f"[错误] 未知工具: {name}")]
+        try:
+            return await handler(arguments)
+        except Exception as exc:
+            # 防止 handler 异常导致 MCP Server 崩溃
+            return [TextContent(type="text", text=f"[错误] 工具 {name} 执行异常: {exc}")]
+
+    return server
+
+
+async def _run_server() -> None:
+    """启动 MCP Server（stdio 传输）。"""
+    server = create_server()
+
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, server.create_initialization_options())
+    except Exception as exc:
+        print(f"[reqflow] MCP Server 异常退出: {exc}", file=sys.stderr)
+        raise
+
+
+def main() -> None:
+    """MCP Server 入口。"""
+    if not MCP_AVAILABLE:
+        print(
+            "[错误] MCP 依赖未安装。请先安装:\n"
+            "  pip install mcp\n\n"
+            "MCP Server 是可选功能，不影响 reqflow CLI 的使用。",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    asyncio.run(_run_server())
 
 
 if __name__ == "__main__":
