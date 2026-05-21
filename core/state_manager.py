@@ -1,4 +1,4 @@
-"""StateManager - state persistence, checkpoints, session, and memory."""
+"""StateManager - state persistence, checkpoints, session, memory, and experience cache."""
 
 from __future__ import annotations
 
@@ -54,6 +54,113 @@ class Memory:
 
 
 @dataclass
+class ExperienceEntry:
+    """单条经验缓存。"""
+    stage: str
+    pattern: str  # 成功/失败模式描述
+    outcome: str  # "success" | "failure" | "partial"
+    confidence: float = 0.0  # 经验置信度 0-1
+    context: str = ""  # 适用场景
+    tags: list[str] = field(default_factory=list)
+    source_run: str = ""  # 来源运行 ID
+    reuse_count: int = 0  # 被复用次数
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+
+class ExperienceCache:
+    """经验缓存 — 跨运行的阶段经验复用。"""
+
+    def __init__(self, cache_dir: str = ".reqflow/experience"):
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cache_file = self.cache_dir / "experience.json"
+        self._entries: list[ExperienceEntry] = []
+        self._load()
+
+    def _load(self):
+        """从文件加载经验缓存。"""
+        if self._cache_file.exists():
+            try:
+                data = json.loads(self._cache_file.read_text(encoding="utf-8"))
+                self._entries = [ExperienceEntry(**e) for e in data]
+            except Exception:
+                self._entries = []
+
+    def _save(self):
+        """保存经验缓存到文件。"""
+        self._cache_file.write_text(
+            json.dumps([asdict(e) for e in self._entries], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def add(self, entry: ExperienceEntry) -> None:
+        """添加经验条目。"""
+        self._entries.append(entry)
+        self._save()
+
+    def query(
+        self,
+        stage: str = "",
+        outcome: str = "",
+        tags: list[str] | None = None,
+        min_confidence: float = 0.0,
+        limit: int = 10,
+    ) -> list[ExperienceEntry]:
+        """查询经验缓存。"""
+        results = self._entries
+
+        if stage:
+            results = [e for e in results if e.stage == stage]
+        if outcome:
+            results = [e for e in results if e.outcome == outcome]
+        if tags:
+            tag_set = set(tags)
+            results = [e for e in results if tag_set.intersection(e.tags)]
+        if min_confidence > 0:
+            results = [e for e in results if e.confidence >= min_confidence]
+
+        # 按置信度和复用次数排序
+        results.sort(key=lambda e: (e.confidence, e.reuse_count), reverse=True)
+        return results[:limit]
+
+    def record_reuse(self, index: int) -> None:
+        """记录经验被复用。"""
+        if 0 <= index < len(self._entries):
+            self._entries[index].reuse_count += 1
+            self._save()
+
+    def get_stats(self) -> dict[str, Any]:
+        """获取缓存统计。"""
+        if not self._entries:
+            return {"total": 0, "by_stage": {}, "by_outcome": {}}
+
+        by_stage: dict[str, int] = {}
+        by_outcome: dict[str, int] = {}
+        for e in self._entries:
+            by_stage[e.stage] = by_stage.get(e.stage, 0) + 1
+            by_outcome[e.outcome] = by_outcome.get(e.outcome, 0) + 1
+
+        return {
+            "total": len(self._entries),
+            "by_stage": by_stage,
+            "by_outcome": by_outcome,
+            "avg_confidence": sum(e.confidence for e in self._entries) / len(self._entries),
+        }
+
+    def format_summary(self, stage: str = "") -> str:
+        """格式化经验摘要。"""
+        entries = self.query(stage=stage, limit=5) if stage else self._entries[:5]
+        if not entries:
+            return "无经验缓存"
+
+        lines = [f"经验缓存 ({len(entries)} 条):"]
+        for e in entries:
+            icon = {"success": "✅", "failure": "❌", "partial": "⚠️"}.get(e.outcome, "?")
+            lines.append(f"  {icon} [{e.stage}] {e.pattern[:50]} (置信度: {e.confidence:.0%}, 复用: {e.reuse_count}次)")
+        return "\n".join(lines)
+
+
+@dataclass
 class Checkpoint:
     checkpoint_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     run_id: str = ""
@@ -78,6 +185,7 @@ class RunState:
     lessons_learned: list[str] = field(default_factory=list)
     agent_execution_log: list[dict[str, Any]] = field(default_factory=list)
     stage_records: list[dict[str, Any]] = field(default_factory=list)
+    stage_experiences: list[dict[str, Any]] = field(default_factory=list)  # V7 经验缓存
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 

@@ -175,6 +175,23 @@ def _generate_global_constraints(routing: RoutingDecision) -> str:
         "4. **必须等待用户验收** — 所有阶段完成后必须停止，等待用户调用 `reqflow_accept` 或 `reqflow_reject`",
         "5. **不得自行验收** — 只有用户才能决定是否通过，Agent 不得自行调用 `reqflow_accept`",
         "",
+        "### ⛔ V7 多 Agent 协作协议（强制）",
+        "",
+        "**核心原则：多 Agent 视角切换，不是多进程，而是同一 LLM 从不同角色视角输出。**",
+        "",
+        "1. **强制参与** — 每阶段指定的 Agent 必须全部输出，不得跳过、不得合并、不得省略",
+        "2. **leader-agent 全程参与** — 在有 leader_role 的阶段，leader 必须首先输出统筹分析",
+        "3. **research-agent 全程参与** — 在所有非轻量阶段，research-agent 必须提供证据支撑",
+        "4. **共识表必须输出** — 每阶段结束必须输出共识表，展示各 Agent 对各维度的评估",
+        "5. **置信度必须自评** — 每个 Agent 必须输出 0-100% 的置信度和理由",
+        "6. **白盒透明** — 用户必须看到每个 Agent 的完整推理过程，不能只展示结论",
+        "",
+        "**⛔ 违反以上任何一条即为流程失败。**",
+        "",
+        f"{_LEADER_DECISION_PRINCIPLES}",
+        "",
+        f"{_DEGRADATION_MATRIX}",
+        "",
         "### 代码与工程约束",
         "",
         "- 所有代码变更必须通过测试验证",
@@ -198,7 +215,6 @@ def _generate_global_constraints(routing: RoutingDecision) -> str:
         "- Agent 执行阶段使用多智能体模式：dev-agent → verify-agent + review-agent（并行）",
         "- dev-agent 使用 acceptEdits 权限模式",
         "- verify-agent 和 review-agent 并行执行，互不阻塞",
-        "- 模型选择：复杂任务用 opus，标准任务用 sonnet",
         "",
         "### Loop Engine 约束",
         "",
@@ -302,88 +318,123 @@ def _generate_mcp_guide() -> str:
 - `reqflow_health` — 检查 ReqFlow 系统健康状态"""
 
 
-# 辅助 Agent 映射表 — 每阶段至少 2-3 个 agent 提升置信度
-_AUXILIARY_AGENTS = {
-    "启动": [],
-    "PRD理解": ["research-agent", "architecture-agent"],
-    "Spec治理": ["security-agent", "architecture-agent"],
-    "工作流智能": ["architecture-agent", "research-agent"],
-    "上下文发现": ["research-agent", "architecture-agent", "security-agent"],
-    "技术方案": ["research-agent", "architecture-agent", "security-agent", "performance-agent"],
-    "实施计划": ["architecture-agent", "test-gen-agent"],
-    "Agent执行": ["debug-agent", "test-gen-agent"],
-    "代码审查": ["security-agent", "performance-agent", "architecture-agent"],
-    "交付验证": ["test-gen-agent", "security-agent"],
-    "总结": ["doc-agent"],
-    "归档": ["doc-agent"],
+# V7 Agent 映射表 — leader 全程参与 + research-agent 参与所有必要阶段
+_STAGE_AGENTS = {
+    "启动": {"leader": None, "specialists": ["doc-agent"]},
+    "PRD理解": {"leader": "需求审查官", "specialists": ["research-agent", "architecture-agent", "compliance-agent"]},
+    "Spec治理": {"leader": "规格审计员", "specialists": ["research-agent", "security-agent", "architecture-agent", "data-agent", "compliance-agent"]},
+    "工作流智能": {"leader": "流程架构师", "specialists": ["research-agent", "architecture-agent", "api-agent"]},
+    "上下文发现": {"leader": "上下文裁判", "specialists": ["research-agent", "architecture-agent", "security-agent"]},
+    "技术方案": {"leader": "技术决策者", "specialists": ["research-agent", "architecture-agent", "security-agent", "performance-agent", "data-agent", "api-agent"]},
+    "实施计划": {"leader": "任务分解官", "specialists": ["research-agent", "architecture-agent", "test-gen-agent", "debug-agent"]},
+    "Agent执行": {"leader": "质量门禁官", "specialists": ["research-agent", "debug-agent", "test-gen-agent", "security-agent"]},
+    "代码审查": {"leader": "审查综合者", "specialists": ["research-agent", "security-agent", "performance-agent", "architecture-agent", "test-gen-agent"]},
+    "交付验证": {"leader": "最终裁决者", "specialists": ["research-agent", "test-gen-agent", "security-agent", "compliance-agent"]},
+    "总结": {"leader": "复盘主持人", "specialists": ["research-agent", "doc-agent"]},
+    "归档": {"leader": None, "specialists": ["doc-agent"]},
     # 旧名称兼容
-    "上下文理解": ["research-agent", "architecture-agent"],
-    "代码梳理": ["research-agent", "architecture-agent"],
-    "生成代码": ["debug-agent", "test-gen-agent"],
-    "跨模块终检": ["security-agent", "performance-agent"],
+    "上下文理解": {"leader": "上下文裁判", "specialists": ["research-agent", "architecture-agent", "security-agent"]},
+    "代码梳理": {"leader": "上下文裁判", "specialists": ["research-agent", "architecture-agent", "security-agent"]},
+    "生成代码": {"leader": "质量门禁官", "specialists": ["research-agent", "debug-agent", "test-gen-agent", "security-agent"]},
+    "跨模块终检": {"leader": "审查综合者", "specialists": ["research-agent", "security-agent", "performance-agent", "architecture-agent", "test-gen-agent"]},
     # L0/L1 特有
-    "分析报告": ["research-agent", "architecture-agent"],
-    "轻量实现": ["debug-agent", "test-gen-agent"],
-    "局部验证": ["test-gen-agent", "security-agent"],
+    "分析报告": {"leader": "需求审查官", "specialists": ["research-agent", "architecture-agent"]},
+    "轻量实现": {"leader": "质量门禁官", "specialists": ["research-agent", "debug-agent", "test-gen-agent"]},
+    "局部验证": {"leader": "最终裁决者", "specialists": ["research-agent", "test-gen-agent", "security-agent"]},
 }
 
-# Agent 角色定义 — 在对话中输出时使用
+# 向后兼容：_AUXILIARY_AGENTS 只返回 specialist 列表
+_AUXILIARY_AGENTS = {k: v["specialists"] for k, v in _STAGE_AGENTS.items()}
+
+# V7 Agent 角色定义 — 11 个 agent，模型不限（由宿主 agent 决定）
 _AGENT_ROLES = {
+    "leader-agent": {
+        "role": "统筹协调",
+        "responsibility": "路由、派遣、聚合、裁决，全程参与决策",
+    },
     "research-agent": {
         "role": "调研分析",
-        "model": "sonnet",
-        "responsibility": "技术调研、竞品分析、技术选型、探索性分析",
-        "keywords": "调研, 分析, 竞品, 技术选型, 探索",
+        "responsibility": "技术调研、竞品分析、证据支撑、行业对标",
     },
     "architecture-agent": {
         "role": "架构设计",
-        "model": "opus",
-        "responsibility": "架构设计、设计模式、模块划分、重构规划",
-        "keywords": "架构, 设计模式, 重构, 模块划分",
+        "responsibility": "架构设计、模块划分、重构规划、接口定义",
     },
     "security-agent": {
         "role": "安全审查",
-        "model": "opus",
-        "responsibility": "安全审查、鉴权方案、注入防护、XSS/CSRF 防御、加密方案",
-        "keywords": "安全, 鉴权, 注入, XSS, CSRF, 加密",
+        "responsibility": "安全审查、鉴权方案、注入防护、XSS/CSRF 防御、漏洞检查",
     },
     "performance-agent": {
         "role": "性能优化",
-        "model": "sonnet",
         "responsibility": "性能分析、缓存策略、查询优化、并发处理、内存优化",
-        "keywords": "性能, 缓存, 查询优化, 并发, 内存",
     },
     "test-gen-agent": {
         "role": "测试生成",
-        "model": "sonnet",
         "responsibility": "测试用例设计、覆盖率分析、边界条件测试、回归测试",
-        "keywords": "测试, 用例, 覆盖率, 边界",
     },
     "debug-agent": {
         "role": "调试修复",
-        "model": "sonnet",
         "responsibility": "错误诊断、异常排查、堆栈分析、问题定位与修复",
-        "keywords": "调试, 错误, 异常, 堆栈, 排查",
     },
     "doc-agent": {
         "role": "文档生成",
-        "model": "sonnet",
         "responsibility": "文档编写、注释规范、README 生成、API 文档维护",
-        "keywords": "文档, 注释, README, API 文档",
+    },
+    "data-agent": {
+        "role": "数据建模",
+        "responsibility": "数据库 schema 设计、ER 图、数据流设计、表结构优化",
+    },
+    "api-agent": {
+        "role": "API 设计",
+        "responsibility": "接口设计、契约定义、API 规范、RESTful/GraphQL 设计",
+    },
+    "compliance-agent": {
+        "role": "合规审查",
+        "responsibility": "法规合规、数据隐私、许可证检查、GDPR/合规标准",
     },
 }
 
+# Leader 决策规则（借鉴 gstack 6 原则）
+_LEADER_DECISION_PRINCIPLES = """**Leader 决策规则（6 原则）：**
+1. **Choose completeness** — 选覆盖更多边缘情况的方案
+2. **Pragmatic** — 两个方案解决同一问题时，选更干净的
+3. **DRY** — 重复现有功能？拒绝
+4. **Explicit over clever** — 10 行显而易见 > 200 行抽象
+5. **Bias toward action** — 执行 > 审查循环 > 陈旧审议
+6. **User sovereignty** — AI 推荐，用户决策
+
+**决策分类：**
+- **Mechanical** — 明确正确答案，静默自动决定
+- **Taste** — 自动决定但呈现给用户
+- **User Challenge** — 挑战用户方向时，永不自动决定，提交用户"""
+
+# 降级矩阵
+_DEGRADATION_MATRIX = """**降级矩阵：**
+- leader-agent 可用 → 正常多 Agent 协作 + 共识表
+- leader-agent 失败 → specialist agents 自组织 + 简化共识
+- 所有 specialist 失败 → 单 Agent 模式 + 标记 [degraded]"""
+
+# 置信度提取 prompt（基于 Anthropic P(True) 研究）
+_CONFIDENCE_PROMPT = """**置信度自评（每个 agent 必须执行）：**
+Rate your confidence in this analysis from 0-100%.
+Consider:
+- Is the information well-established in the codebase?
+- Did you have sufficient context to make this judgment?
+- Are there edge cases you couldn't verify?
+Format: confidence=<0-100>, reasoning=<your reasoning>"""
+
 
 def _generate_standard_actions(stage_name: str, routing: RoutingDecision, auto_pilot: bool = False) -> str:
-    """生成阶段标准动作 — 每个阶段都有的自检、问题发现、确认点。"""
+    """V7 阶段标准动作 — 共识表、质量门、置信度、反思点。"""
     is_deep = routing.level in (RoutingLevel.L2, RoutingLevel.L3)
-    agents = _AUXILIARY_AGENTS.get(stage_name, [])
+    stage_info = _STAGE_AGENTS.get(stage_name, {})
+    leader_role = stage_info.get("leader")
+    specialists = stage_info.get("specialists", [])
+    all_agents = (["leader-agent"] if leader_role else []) + specialists
 
     lines = [
         "",
         "### 阶段标准动作（⛔ 强制执行，不得跳过）",
-        "",
-        "**完成上述任务后，必须按顺序执行以下标准动作：**",
         "",
         "#### 1. 自检",
         "- 所有必需的产出物已生成",
@@ -405,76 +456,165 @@ def _generate_standard_actions(stage_name: str, routing: RoutingDecision, auto_p
         "- 无法继续的技术障碍、需求歧义、外部依赖不可用",
     ]
 
-    if agents:
-        agent_names = ", ".join(f"`{a}`" for a in agents)
+    # Agent 视角输出（强制，不可跳过）
+    if specialists:
         lines.extend([
             "",
-            "#### 3. 辅助 Agent 协作（⛔ 必须执行）",
-            f"- 本阶段必须协作的辅助 Agent: {agent_names}",
-            "- **每个辅助 Agent 必须被调用**，从其专业角度提供分析",
-            "- 调用方式：使用 Agent 工具派遣子 agent，明确指定分析任务",
-            "- **在对话中逐个展示每个 agent 的分析结果**，格式：",
-            "  ```",
-            "  📋 [agent-name] 分析结果:",
-            "  - 发现: ...",
-            "  - 建议: ...",
-            "  - 风险: ...",
-            "  ```",
-            "- 如果某个 agent 不可用，在对话中说明并继续",
+            "#### 3. ⛔ 强制 Agent 视角输出（不可跳过、不可合并、不可省略）",
+            "",
+            "**必须依次输出以下 Agent 视角，每个视角独立输出：**",
+            "",
         ])
+        if leader_role:
+            lines.append(f"##### 3.0 leader-agent（{leader_role}）")
+            lines.append(f'"作为 leader-agent（{leader_role}），本阶段的统筹分析是："')
+            lines.append(f"- 必须输出完整分析，至少 100 字")
+            lines.append(f"- 分析本阶段任务、确定关键决策点")
+            lines.append("")
 
+        for i, agent in enumerate(specialists, 1):
+            info = _AGENT_ROLES.get(agent, {})
+            role = info.get("role", "通用")
+            resp = info.get("responsibility", "")
+            lines.extend([
+                f"##### 3.{i} {agent}（{role}）",
+                f'"作为 {agent}（{role}），针对本阶段任务，我的分析是："',
+                f"- 职责范围: {resp}",
+                f"- 必须输出完整分析，至少 200 字",
+                f"- 必须包含证据支撑（代码引用、调研数据、标准对标）",
+                f"- {_CONFIDENCE_PROMPT}",
+                "",
+            ])
+
+    # 共识表
     lines.extend([
         "",
-        "#### 4. 对话中展示摘要（⛔ 必须执行）",
+        "#### 4. ⛔ 共识表（必须输出）",
         "",
-        "**不能只写到文件里。必须在对话中包含以下内容：**",
+        "**必须在对话中输出以下格式的共识表：**",
         "",
-        "1. **本阶段做了什么**（具体操作，不是泛泛而谈）",
-        "2. **关键发现**（发现的问题、风险、机会）",
-        "3. **决策和理由**（做了什么选择、为什么）",
-        "4. **改进建议**（可以优化的地方）",
-        "5. **置信度**（high/medium/low + 原因）",
-        "6. **文件路径**（供需要详情时查看）",
+        "```",
+        "┌─────────────────────────────────────────────────────────┐",
+        f"│ 📋 {stage_name} — 阶段共识表                               │",
+        "├─────────────────────────────────────────────────────────┤",
+        f"│ 🧑‍💼 leader-agent: {leader_role or 'N/A'}                         │",
+        "│                                                          │",
+        "│ 维度         │ agent1  │ agent2  │ agent3  │ 共识       │",
+        "│──────────────┼─────────┼─────────┼─────────┼────────────│",
+        "│ 维度1        │ 0.85 ✅ │ 0.80 ✅ │ 0.75 ✅ │ CONFIRMED  │",
+        "│ 维度2        │ 0.70 ⚠️ │ 0.80 ✅ │ —       │ FLAGGED    │",
+        "│──────────────┼─────────┼─────────┼─────────┼────────────│",
+        "│ 共识统计: CONFIRMED=X DISAGREE=X FLAGGED=X N/A=X        │",
+        "│                                                          │",
+        "│ 🧑‍💼 leader 裁决: [具体决策和理由]                          │",
+        "│ 决策类型: Mechanical/Taste/User Challenge                │",
+        "│ 综合置信度: 0.XX (LEVEL) → action                       │",
+        "└─────────────────────────────────────────────────────────┘",
+        "```",
         "",
-        "**可视化要求：**",
-        "- 使用 ASCII 表格展示对比/状态信息",
-        "- 使用进度条展示完成度/置信度",
-        "- 使用 Mermaid 图表展示流程/架构（如果适用）",
+        "**共识判定规则：**",
+        "- ≥2 agent 一致 ✅ → CONFIRMED",
+        "- ≥1 agent 标记 ❌ → DISAGREE，提交用户",
+        "- ≥1 agent 标记 ⚠️ → FLAGGED，leader 裁决",
+        "- 仅 1 agent 评估 → N/A，下阶段补充",
+        "- 平票 → 置信度加权打破",
+    ])
+
+    # 质量门
+    lines.extend([
         "",
-        "#### 5. 阶段确认" + ("（⛔ 硬停止点）" if not auto_pilot else "（自动模式）"),
+        "#### 5. ⛔ 质量门（必须执行）",
         "",
-        "#### 6. 置信度评估 + 可视化报告（⛔ 必须执行）",
+        "**必须在对话中输出质量门报告：**",
         "",
-        "**必须在对话中输出以下格式的报告：**",
+        "```",
+        "┌─────────────────────────────────────┐",
+        f"│ 🔒 质量门 — {stage_name}                  │",
+        "├─────────────────────────────────────┤",
+        "│ 检查项           │ 结果    │ 详情    │",
+        "│─────────────────┼────────┼────────│",
+        "│ 产出物完整性      │ ✅ PASS │ 6/6    │",
+        "│ 测试用例覆盖      │ ⚠️ WARN │ 75%    │",
+        "│ 安全扫描          │ ✅ PASS │ 0 高危  │",
+        "│─────────────────┼────────┼────────│",
+        "│ 综合: PASS (hybrid 模式，重试 0/3)  │",
+        "└─────────────────────────────────────┘",
+        "```",
+    ])
+
+    # 置信度
+    lines.extend([
+        "",
+        "#### 6. ⛔ 置信度评估（必须执行）",
+        "",
+        "**必须在对话中输出置信度报告（5 维度）：**",
         "",
         "```",
         "┌─────────────────────────────────────┐",
         "│ 📊 阶段置信度报告                     │",
         "├─────────────────────────────────────┤",
-        "│ 完整性: [████████░░] 80%             │",
-        "│ 一致性: [██████████] 100%            │",
-        "│ 准确性: [████████░░] 80%             │",
-        "│ 综合分: 0.86                         │",
-        "│ 级别:   HIGH                         │",
-        "│ 建议:   proceed → 自动进入下一阶段     │",
+        "│ 完整性:   [████████░░] 80%  🟢       │",
+        "│ 一致性:   [██████████] 100% 🟢       │",
+        "│ 准确性:   [████████░░] 80%  🟢       │",
+        "│ 可测试性: [██████░░░░] 60%  🟡       │",
+        "│ 风险覆盖: [████████░░] 80%  🟢       │",
+        "│─────────────────────────────────────│",
+        "│ 综合分: 0.80  级别: HIGH             │",
+        "│ 建议:   proceed → 进入下一阶段        │",
+        "│                                     │",
+        "│ Agent 共识详情:                       │",
+        "│  research-agent: 0.85 (证据充分)      │",
+        "│  architecture-agent: 0.80 (方案清晰)  │",
+        "│  共识度: 0.92 (高度一致)              │",
         "└─────────────────────────────────────┘",
         "```",
         "",
-        "- 调用 `reqflow_confidence(completeness=..., consistency=..., accuracy=...)` 获取路由建议",
-        "- **high** → 自动进入下一阶段",
-        "- **medium** → 暂停，列出不确定点，等待用户判断",
-        "- **low** → 自动重试（最多 2 次），仍 low 则升级到用户",
-        "- low 必须说明具体原因和重试计划",
+        "- 调用 `reqflow_confidence(completeness=..., consistency=..., accuracy=..., testability=..., risk_coverage=...)`",
+        "- **very_high (≥0.9)** → 自动进入下一阶段",
+        "- **high (≥0.75)** → 进入下一阶段",
+        "- **medium (≥0.5)** → 暂停，列出不确定点，等待用户判断",
+        "- **low (≥0.3)** → 自动重试（最多 2 次），仍 low 则升级到用户",
+        "- **very_low (<0.3)** → 升级到用户",
+    ])
+
+    # 反思点
+    lines.extend([
+        "",
+        "#### 7. ⛔ 反思点（必须执行）",
+        "",
+        "**必须在对话中输出反思总结：**",
+        "",
+        "1. **本阶段成功模式** — 哪些做法有效，值得后续阶段借鉴",
+        "2. **本阶段不足** — 哪些地方做得不够，需要后续阶段补充",
+        "3. **改进建议** — 对后续阶段的具体建议",
+        "",
+        "**写入 memory：** 调用 `reqflow_memory_save(category=\"reflection\", key=\"{stage_name}\", value=...)`",
+        "",
+    ])
+
+    # 阶段确认
+    lines.extend([
+        "#### 8. 阶段确认" + ("（⛔ 硬停止点）" if not auto_pilot else "（自动模式）"),
+        "",
+        "- 调用 `reqflow_report` 报告阶段完成",
+        "- 等待用户确认后进入下一阶段（除非 auto_pilot 模式）",
     ])
 
     return "\n".join(lines)
 
 
 def _generate_brainstorming_section(stage_name: str, routing: RoutingDecision) -> str:
-    """生成头脑风暴指令（每个阶段都必须执行）。"""
+    """V7 头脑风暴 — leader 全程参与 + 强制 agent 视角输出。"""
+    stage_info = _STAGE_AGENTS.get(stage_name, {})
+    leader_role = stage_info.get("leader")
+    specialists = stage_info.get("specialists", [])
+
+    if not specialists:
+        return ""
+
+    # 确定头脑风暴模式
     high_value_stages = {"PRD理解", "上下文发现", "技术方案", "代码审查"}
     medium_value_stages = {"Spec治理", "工作流智能", "实施计划", "交付验证"}
-
     if stage_name in high_value_stages:
         mode = "panel-of-experts" if stage_name in {"技术方案", "上下文发现"} else "round-robin"
         max_rounds = 3
@@ -484,25 +624,22 @@ def _generate_brainstorming_section(stage_name: str, routing: RoutingDecision) -
         max_rounds = 1
         value_level = "中价值"
     else:
-        # 低价值阶段也执行，但用快速模式
         mode = "round-robin"
         max_rounds = 1
         value_level = "标准"
 
-    agents = _AUXILIARY_AGENTS.get(stage_name, [])
-    if not agents:
-        agents = ["architecture-agent"]
-
-    agent_list = ", ".join(f"`{a}`" for a in agents)
+    all_agents = (["leader-agent"] if leader_role else []) + specialists
+    agent_list = ", ".join(f"`{a}`" for a in all_agents)
 
     # 生成 agent 角色描述表
     role_lines = []
-    for agent_name in agents:
+    if leader_role:
+        role_lines.append(f"| `leader-agent` | 统筹协调 | any | {leader_role}：路由、派遣、聚合、裁决 |")
+    for agent_name in specialists:
         info = _AGENT_ROLES.get(agent_name, {})
         role = info.get("role", "通用")
-        model = info.get("model", "sonnet")
         resp = info.get("responsibility", "通用任务")
-        role_lines.append(f"| `{agent_name}` | {role} | {model} | {resp} |")
+        role_lines.append(f"| `{agent_name}` | {role} | any | {resp} |")
     role_table = "\n".join(role_lines)
 
     return f"""
@@ -516,24 +653,24 @@ def _generate_brainstorming_section(stage_name: str, routing: RoutingDecision) -
 |-------|------|------|------|
 {role_table}
 
-**Subagent 定位说明：**
-- 每个 Agent 是独立的 subagent，拥有隔离的上下文
-- 主 Agent（协调者）负责调度 subagent、汇总结果、处理分歧
-- subagent 之间不直接通信，通过主 Agent 中转
-
-**执行流程（必须在对话中完整输出）：**
-1. **首先输出上方 Agent 角色表**，让用户知道哪些 agent 参与及其职责
-2. 调用 `reqflow_brainstorm(mode="{mode}", agents=[{repr(agents)}], topic="{stage_name}", context="本阶段上下文")`
-3. **每个 agent 的发言必须在对话中逐条展示**，格式：
+**执行流程（⛔ 必须在对话中完整输出，不可跳过）：**
+1. **首先输出上方 Agent 角色表**，让用户知道哪些 agent 参及其职责
+2. {"**leader-agent 作为 " + leader_role + " 统筹本阶段**" if leader_role else ""}
+3. 调用 `reqflow_brainstorm(mode="{mode}", agents=[{repr(specialists)}], topic="{stage_name}", context="本阶段上下文")`
+4. **每个 specialist agent 的发言必须在对话中逐条展示**，格式：
    ```
    🔵 [agent-name]（角色）: <具体观点和分析>
+   置信度: XX% (理由)
    ```
-4. 记录讨论过程到 `brainstorming/{stage_name}.md`
-5. **输出共识结果**，作为本阶段决策参考
-6. 如果有分歧，展示正反观点和最终裁决
+5. 记录讨论过程到 `brainstorming/{stage_name}.md`
+6. **输出共识结果**，作为本阶段决策参考
+7. 如果有分歧，展示正反观点和 leader 最终裁决
 
-**白盒要求：** 用户必须能看到每个 agent 的角色、完整推理过程和决策依据，不能只展示结论。
-**如果 agent 不可用：** 降级为单 agent 模式，在对话中说明降级原因。
+{_LEADER_DECISION_PRINCIPLES}
+
+{_DEGRADATION_MATRIX}
+
+**白盒要求：** 用户必须能看到每个 agent 的角色、完整推理过程、置信度和决策依据，不能只展示结论。
 """
 
 

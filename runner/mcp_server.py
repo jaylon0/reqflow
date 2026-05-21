@@ -555,11 +555,11 @@ TOOLS: list[dict] = [
     },
     {
         "name": "reqflow_brainstorm",
-        "description": "触发多 Agent 头脑风暴（round-robin/panel-of-experts/adversarial-debate/critique-refine）",
+        "description": "触发多 Agent 头脑风暴（round-robin/panel-of-experts/adversarial-debate/critique-refine/structured-debate）",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "mode": {"type": "string", "enum": ["round-robin", "panel-of-experts", "adversarial-debate", "critique-refine"], "description": "头脑风暴模式"},
+                "mode": {"type": "string", "enum": ["round-robin", "panel-of-experts", "adversarial-debate", "critique-refine", "structured-debate"], "description": "头脑风暴模式"},
                 "agents": {"type": "array", "items": {"type": "string"}, "description": "参与 agent 列表"},
                 "topic": {"type": "string", "description": "讨论主题"},
                 "context": {"type": "string", "description": "上下文信息"},
@@ -570,14 +570,29 @@ TOOLS: list[dict] = [
     },
     {
         "name": "reqflow_confidence",
-        "description": "评估或查询置信度（3-tier: high/medium/low + 自动路由）",
+        "description": "评估或查询置信度（V7: 5维度×5档 + 共识度 + 自动路由）",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "completeness": {"type": "number", "description": "完整性 (0-1)"},
                 "consistency": {"type": "number", "description": "一致性 (0-1)"},
                 "accuracy": {"type": "number", "description": "准确性 (0-1)"},
+                "testability": {"type": "number", "description": "可测试性 (0-1)", "default": 0.5},
+                "risk_coverage": {"type": "number", "description": "风险覆盖 (0-1)", "default": 0.5},
                 "retry_count": {"type": "integer", "description": "已重试次数", "default": 0},
+                "agent_confidences": {
+                    "type": "array",
+                    "description": "各 Agent 自评置信度",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "agent_name": {"type": "string"},
+                            "score": {"type": "number"},
+                            "reasoning": {"type": "string"},
+                        },
+                        "required": ["agent_name", "score"],
+                    },
+                },
             },
             "required": ["completeness", "consistency", "accuracy"],
         },
@@ -2206,19 +2221,38 @@ async def _handle_brainstorm(arguments: dict) -> list:
 
 
 async def _handle_confidence(arguments: dict) -> list:
-    """查询或评估置信度。"""
+    """查询或评估置信度（V7: 5维度×5档）。"""
     completeness = arguments.get("completeness", 1.0)
     consistency = arguments.get("consistency", 1.0)
     accuracy = arguments.get("accuracy", 1.0)
+    testability = arguments.get("testability", 0.5)
+    risk_coverage = arguments.get("risk_coverage", 0.5)
     retry_count = arguments.get("retry_count", 0)
+    agent_confidences_raw = arguments.get("agent_confidences", [])
 
-    from reqflow.core.confidence import ConfidenceAssessor
+    from reqflow.core.confidence import ConfidenceAssessor, AgentConfidence
     assessor = ConfidenceAssessor()
+
+    # 转换 agent_confidences
+    agent_confidences = None
+    if agent_confidences_raw:
+        agent_confidences = [
+            AgentConfidence(
+                agent_name=ac["agent_name"],
+                score=ac["score"],
+                reasoning=ac.get("reasoning", ""),
+            )
+            for ac in agent_confidences_raw
+        ]
+
     result = assessor.assess(
         completeness=completeness,
         consistency=consistency,
         accuracy=accuracy,
+        testability=testability,
+        risk_coverage=risk_coverage,
         retry_count=retry_count,
+        agent_confidences=agent_confidences,
     )
 
     return [TextContent(type="text", text=json.dumps({
@@ -2226,6 +2260,8 @@ async def _handle_confidence(arguments: dict) -> list:
         "score": round(result.score, 2),
         "action": result.action,
         "reasons": result.reasons,
+        "dimensions": {d.name: round(d.score, 2) for d in result.dimensions},
+        "consensus_degree": round(result.consensus_degree, 2),
     }, ensure_ascii=False, indent=2))]
 
 
