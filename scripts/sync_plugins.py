@@ -12,8 +12,14 @@ CACHE_PATHS = [
     Path.home() / ".codex/plugins/marketplaces/local/plugins/reqflow",
 ]
 
-SRC_PYTHON = Path("core").parent  # project root
-SYNC_DIRS = ["core", "runner", "skills", "workflows"]
+SRC = Path("core").parent  # project root
+SYNC_DIRS = ["core", "runner", "skills", "workflows", "config"]
+
+# Plugin metadata files to copy directly
+PLUGIN_FILES = [
+    ".claude-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+]
 
 
 def sync():
@@ -23,7 +29,7 @@ def sync():
             print(f"⚠️  skip (not found): {cache}")
             continue
         for subdir in SYNC_DIRS:
-            src = SRC_PYTHON / subdir
+            src = SRC / subdir
             if not src.exists():
                 continue
             dst = cache / "python" / "reqflow" / subdir if subdir in ("core", "runner") else cache / subdir
@@ -32,6 +38,13 @@ def sync():
                 ["rsync", "-a", "--delete", "--exclude=__pycache__", "--exclude=*.egg-info", "--exclude=.venv", f"{src}/", f"{dst}/"],
                 check=True,
             )
+        # Sync plugin metadata files
+        for pf in PLUGIN_FILES:
+            src_file = SRC / pf
+            dst_file = cache / pf
+            if src_file.exists() and dst_file.parent.exists():
+                dst_file.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["cp", str(src_file), str(dst_file)], check=True)
         synced += 1
         print(f"✅ synced: {cache}")
 
