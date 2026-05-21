@@ -1,0 +1,84 @@
+# config/agents.yaml — Agent 配置
+agents:
+  auxiliary:
+    research-agent:
+      model: sonnet
+      trigger: keyword
+      keywords: [调研, 分析, 竞品, 技术选型, 探索]
+    architecture-agent:
+      model: opus
+      trigger: keyword
+      keywords: [架构, 设计模式, 重构, 模块划分]
+    security-agent:
+      model: opus
+      trigger: keyword
+      keywords: [安全, 鉴权, 注入, XSS, CSRF, 加密]
+    performance-agent:
+      model: sonnet
+      trigger: keyword
+      keywords: [性能, 缓存, 查询优化, 并发, 内存]
+    test-gen-agent:
+      model: sonnet
+      trigger: keyword
+      keywords: [测试, 用例, 覆盖率, 边界]
+    debug-agent:
+      model: sonnet
+      trigger: keyword
+      keywords: [调试, 错误, 异常, 堆栈, 排查]
+    doc-agent:
+      model: sonnet
+      trigger: keyword
+      keywords: [文档, 注释, README, API 文档]
+
+  brainstorming:
+    modes:
+      round-robin:
+        max_rounds: 3
+        consensus: majority
+      panel-of-experts:
+        max_rounds: 3
+        consensus: majority
+      adversarial-debate:
+        max_rounds: 3
+        consensus: judge
+      critique-refine:
+        max_rounds: 5
+        consensus: majority
+
+  stage_mapping:
+    启动:
+      brainstorming: null
+      agents: []
+    PRD理解:
+      brainstorming: round-robin
+      agents: [research-agent, architecture-agent]
+    Spec治理:
+      brainstorming: critique-refine
+      agents: [security-agent, architecture-agent]
+    工作流智能:
+      brainstorming: round-robin
+      agents: [architecture-agent, research-agent]
+    上下文发现:
+      brainstorming: panel-of-experts
+      agents: [research-agent, architecture-agent, security-agent]
+    技术方案:
+      brainstorming: panel-of-experts
+      agents: [research-agent, architecture-agent, security-agent, performance-agent]
+    实施计划:
+      brainstorming: round-robin
+      agents: [architecture-agent, test-gen-agent]
+    Agent执行:
+      brainstorming: null
+      agents: [debug-agent, test-gen-agent]
+    代码审查:
+      brainstorming: critique-refine
+      agents: [security-agent, performance-agent, architecture-agent]
+    交付验证:
+      brainstorming: null
+      agents: [test-gen-agent, security-agent]
+    总结:
+      brainstorming: null
+      agents: [doc-agent]
+    归档:
+      brainstorming: null
+      agents: [doc-agent]

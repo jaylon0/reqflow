@@ -1,0 +1,12 @@
+# config/project.yaml — 项目级配置
+project:
+  name: "reqflow"
+  tech_stack: [python, yaml, mcp]
+  language: zh-CN
+
+logging:
+  level: normal  # critical | normal | verbose
+
+directory:
+  structure: openSpec  # openSpec | legacy
+  auto_archive: true
