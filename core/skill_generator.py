@@ -215,6 +215,48 @@ def _generate_global_constraints(routing: RoutingDecision) -> str:
             "- 部署相关变更必须有回滚方案",
         ])
 
+    constraints.extend([
+        "",
+        "### 开发准则",
+        "",
+        "Agent 在生码阶段必须遵守以下准则：",
+        "",
+        "**内置准则：**",
+        "- Karpathy Guidelines（Think Before Coding, Simplicity First, Surgical Changes）",
+        "- SOLID 原则（SRP, OCP, LSP, ISP, DIP）",
+        "- DRY 原则（消除重复逻辑）",
+        "",
+        "**技术栈自适应准则（根据项目自动启用）：**",
+        "- Spring 项目：Spring Best Practices",
+        "- MyBatis 项目：MyBatis Best Practices",
+        "- Java 项目：Java 编码规范",
+        "",
+        "**项目自定义准则（从 config/rules.yaml 读取）：**",
+        "- 遵循项目特定的编码规范和架构约束",
+        "",
+        "**准则检查：**",
+        "- 每个模块完成后，检查是否遵守了适用的准则",
+        "- 违规必须在 Review 阶段报告",
+        "",
+        "### 行为记录",
+        "",
+        "Agent 的关键行为必须记录到 conversation.md：",
+        "",
+        "**记录级别（从 config/project.yaml 读取）：**",
+        "- critical：关键决策、错误、BLOCKER → 始终记录",
+        "- normal：模块完成、测试结果、Review 发现 → 默认记录",
+        "- verbose：文件读写、命令执行、中间状态 → 可选记录",
+        "",
+        "**记录格式：**",
+        "```",
+        "## [时间] Agent: <agent-name> | 阶段: <stage> | 级别: <level>",
+        "### 输入",
+        "### 输出",
+        "### 决策（选择 X 而非 Y，因为 Z）",
+        "### 耗时",
+        "```",
+    ])
+
     return "\n".join(constraints)
 
 
