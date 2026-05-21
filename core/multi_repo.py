@@ -7,8 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,108 +19,62 @@ class RepoInfo:
     name: str
     path: str
     branch: str = ""
-    remote: str = ""
-
-    def __post_init__(self):
-        if not self.branch:
-            self.branch = self._detect_branch()
-        if not self.remote:
-            self.remote = self._detect_remote()
-
-    def _detect_branch(self) -> str:
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=self.path, capture_output=True, text=True, timeout=10,
-            )
-            return result.stdout.strip() if result.returncode == 0 else ""
-        except Exception:
-            return ""
-
-    def _detect_remote(self) -> str:
-        try:
-            result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                cwd=self.path, capture_output=True, text=True, timeout=10,
-            )
-            return result.stdout.strip() if result.returncode == 0 else ""
-        except Exception:
-            return ""
+    is_primary: bool = False
 
 
 class MultiRepo:
     """多仓库支持。"""
 
     def __init__(self):
+        """No args."""
         self._repos: dict[str, RepoInfo] = {}
 
-    def detect_repos(self, root: str = ".") -> list[RepoInfo]:
-        """从目录结构推断仓库。"""
-        repos = []
-        root_path = Path(root).resolve()
-
-        # 检查根目录本身是否是 git 仓库
-        if (root_path / ".git").exists():
-            repo = RepoInfo(name=root_path.name, path=str(root_path))
-            repos.append(repo)
-            self._repos[repo.name] = repo
-
-        # 检查子目录
-        for subdir in root_path.iterdir():
-            if subdir.is_dir() and (subdir / ".git").exists():
-                repo = RepoInfo(name=subdir.name, path=str(subdir))
-                repos.append(repo)
-                self._repos[repo.name] = repo
-
-        logger.info("检测到 %d 个仓库", len(repos))
-        return repos
-
-    def add_repo(self, name: str, path: str) -> RepoInfo:
-        """手动添加仓库。"""
-        repo = RepoInfo(name=name, path=path)
+    def add_repo(self, name: str, path: str, is_primary: bool = False) -> RepoInfo:
+        """Add a repo with name, path, and optional is_primary flag."""
+        if is_primary:
+            for repo in self._repos.values():
+                repo.is_primary = False
+        repo = RepoInfo(name=name, path=path, is_primary=is_primary)
         self._repos[name] = repo
+        logger.info("添加仓库: %s (%s)", name, path)
         return repo
 
-    def switch_repo(self, repo_name: str) -> RepoInfo | None:
-        """切换到指定仓库。"""
-        repo = self._repos.get(repo_name)
-        if repo:
-            os.chdir(repo.path)
-            logger.info("切换到仓库: %s (%s)", repo_name, repo.path)
-        return repo
-
-    def get_current_repo(self) -> RepoInfo | None:
-        """获取当前目录对应的仓库。"""
-        cwd = os.getcwd()
+    def get_primary(self) -> RepoInfo | None:
+        """Get the primary repo."""
         for repo in self._repos.values():
-            if cwd.startswith(repo.path):
+            if repo.is_primary:
                 return repo
         return None
 
-    def get_repo(self, name: str) -> RepoInfo | None:
-        """获取指定仓库。"""
+    def get_by_name(self, name: str) -> RepoInfo | None:
+        """Get repo by name."""
         return self._repos.get(name)
 
-    def list_repos(self) -> list[RepoInfo]:
-        """列出所有仓库。"""
-        return list(self._repos.values())
+    def list_repos(self) -> list[dict[str, Any]]:
+        """List all repos as dicts."""
+        return [
+            {"name": r.name, "path": r.path, "branch": r.branch, "is_primary": r.is_primary}
+            for r in self._repos.values()
+        ]
 
-    def cross_repo_trace(self, entry_file: str) -> list[RepoInfo]:
-        """跨仓库调用链路追踪（简化版）。"""
-        related_repos = []
-        for repo in self._repos.values():
-            if os.path.exists(os.path.join(repo.path, entry_file)):
-                related_repos.append(repo)
-        return related_repos
+    def detect_repos(self, base_dir: str) -> list[RepoInfo]:
+        """Scan a directory for git repos and register them."""
+        detected: list[RepoInfo] = []
+        base = Path(base_dir)
+        if not base.is_dir():
+            return detected
 
-    def to_list(self) -> list[dict[str, Any]]:
-        """导出为字典列表。"""
-        return [{"name": r.name, "path": r.path, "branch": r.branch, "remote": r.remote}
-                for r in self._repos.values()]
+        # Check if base_dir itself is a git repo
+        if (base / ".git").exists():
+            repo = self.add_repo(base.name, str(base), is_primary=not self._repos)
+            detected.append(repo)
+            return detected
 
-    def load_from_list(self, data: list[dict[str, Any]]) -> None:
-        """从字典列表加载。"""
-        for item in data:
-            repo = RepoInfo(name=item["name"], path=item["path"],
-                           branch=item.get("branch", ""), remote=item.get("remote", ""))
-            self._repos[repo.name] = repo
+        # Scan immediate subdirectories for .git
+        for child in sorted(base.iterdir()):
+            if child.is_dir() and (child / ".git").exists():
+                repo = self.add_repo(child.name, str(child), is_primary=not self._repos)
+                detected.append(repo)
+
+        logger.info("检测到 %d 个仓库 in %s", len(detected), base_dir)
+        return detected

@@ -1,6 +1,6 @@
 {
   "name": "reqflow",
-  "version": "2.3.0",
+  "version": "3.0.0",
   "description": "从需求到交付的 AI Engineering Harness：上下文管理、工具系统、执行编排、状态记忆、评估观测、约束恢复",
   "author": {
     "name": "ReqFlow Maintainers"

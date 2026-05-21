@@ -1,0 +1,20 @@
+# config/rules.yaml — 开发规则
+rules:
+  - name: karpathy-guidelines
+    source: builtin
+  - name: solid-principles
+    source: builtin
+  - name: dry-principle
+    source: builtin
+  - name: spring-best-practices
+    source: auto-detect
+    condition: "spring" in tech_stack
+  - name: mybatis-best-practices
+    source: auto-detect
+    condition: "mybatis" in tech_stack
+  - name: java-conventions
+    source: auto-detect
+    condition: "java" in tech_stack
+  - name: project-conventions
+    source: custom
+    rules: []

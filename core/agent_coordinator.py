@@ -1,317 +1,159 @@
-"""Agent Coordinator - dispatches agents based on workflow coordination rules.
-
-Reads agent_coordination config (dispatch rules, repair loop, output contracts)
-from workflow YAML Stage 7 and dispatches the appropriate agents.
-"""
+"""Agent Coordinator — 多 Agent 头脑风暴协调器。"""
 
 from __future__ import annotations
 
-import asyncio
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from enum import Enum
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class BrainstormMode(Enum):
+    ROUND_ROBIN = "round-robin"
+    PANEL_OF_EXPERTS = "panel-of-experts"
+    ADVERSARIAL_DEBATE = "adversarial-debate"
+    CRITIQUE_REFINE = "critique-refine"
+    TREE_OF_THOUGHT = "tree-of-thought"
 
 
 @dataclass
-class DispatchRule:
-    """A single dispatch rule mapping work item type to agent."""
-    type: str  # dev | verify | review
-    agent: str  # agent name (e.g. dev-agent)
-    parallel_with: str | None = None  # agent type to run in parallel with
-    model_selection: dict[str, str] | None = None
+class Round:
+    """一轮讨论。"""
+    round_number: int
+    contributions: list[dict[str, Any]]
 
 
 @dataclass
-class AgentResult:
-    """Result from an agent dispatch."""
-    agent: str
-    status: str  # success | failure | error
-    output: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-# Type alias for the dispatch function
-DispatchFunc = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
+class BrainstormResult:
+    """头脑风暴结果。"""
+    mode: BrainstormMode
+    rounds: list[Round]
+    consensus: str = ""
+    summary: str = ""
+    fallback: bool = False
+    unresolved: list[str] = field(default_factory=list)
 
 
 class AgentCoordinator:
-    """Dispatches agents based on workflow coordination rules.
+    """多 Agent 协作协调器。"""
 
-    The coordinator knows WHO to dispatch but not HOW — the actual dispatch
-    is injected via set_dispatch_func().
-    """
-
-    def __init__(self, config: dict[str, Any]):
-        self._config = config
-        self._dispatch_rules = self._parse_dispatch_rules(config.get("dispatch", []))
-        self._repair_config = config.get("repair", {})
-        self._output_contracts = config.get("output_contracts", {})
-        self._dispatch_func: DispatchFunc | None = None
-
-    # --- Properties ---
-
-    @property
-    def dispatch_rules(self) -> list[DispatchRule]:
-        """Parsed dispatch rules."""
-        return self._dispatch_rules
-
-    @property
-    def max_repair_rounds(self) -> int:
-        """Maximum repair loop rounds from config."""
-        return self._repair_config.get("max_rounds", 3)
-
-    @property
-    def repair_strategy(self) -> str:
-        """Repair strategy name from config."""
-        return self._repair_config.get("strategy", "resume_dev_agent")
-
-    @property
-    def output_contracts(self) -> dict[str, str]:
-        """Output contracts keyed by agent type."""
-        return self._output_contracts
-
-    # --- Setup ---
-
-    def set_dispatch_func(self, func: DispatchFunc) -> None:
-        """Set the async callable that actually dispatches an agent.
-
-        The callable signature: (agent_name, prompt, context) -> dict
-        """
-        self._dispatch_func = func
-
-    # --- Dispatch ---
-
-    async def execute_work_item(
-        self, work_item: dict[str, Any], context: dict[str, Any]
-    ) -> AgentResult:
-        """Dispatch the right agent based on work_item type.
-
-        Args:
-            work_item: Work item dict with at least 'type' and 'name' keys.
-            context: Execution context passed to the agent.
-
-        Returns:
-            AgentResult with the agent's output.
-        """
-        if self._dispatch_func is None:
-            return AgentResult(
-                agent="none",
-                status="error",
-                output="No dispatch function set. Call set_dispatch_func() first.",
-            )
-
-        item_type = work_item.get("type", "dev")
-        rule = self._find_rule(item_type)
-        if rule is None:
-            return AgentResult(
-                agent="none",
-                status="error",
-                output=f"No dispatch rule found for type '{item_type}'.",
-            )
-
-        prompt = self._build_prompt(work_item, context)
-        result = await self._dispatch_func(rule.agent, prompt, context)
-        return AgentResult(
-            agent=rule.agent,
-            status=result.get("status", "success"),
-            output=result.get("output", result.get("result", "")),
-            metadata=result,
-        )
-
-    async def run_verification(
+    def brainstorm(
         self,
-        work_item: dict[str, Any],
-        dev_result: AgentResult,
-        context: dict[str, Any],
-    ) -> tuple[AgentResult, AgentResult]:
-        """Run verify + review agents (in parallel if configured).
+        mode: BrainstormMode,
+        agents: list[str],
+        topic: str,
+        context: str,
+        max_rounds: int = 3,
+        consensus_method: str = "majority",
+    ) -> BrainstormResult:
+        """执行头脑风暴。"""
+        rounds = []
+        fallback = False
 
-        Args:
-            work_item: The original work item.
-            dev_result: Result from the dev agent.
-            context: Execution context.
+        for round_num in range(1, max_rounds + 1):
+            contributions = []
+            for agent in agents:
+                contribution = self._get_agent_contribution(
+                    agent=agent,
+                    mode=mode,
+                    topic=topic,
+                    context=context,
+                    round_number=round_num,
+                    previous_rounds=rounds,
+                )
+                if contribution is None:
+                    fallback = True
+                    continue
+                contributions.append(contribution)
 
-        Returns:
-            Tuple of (verify_result, review_result).
-        """
-        if self._dispatch_func is None:
-            error = AgentResult(agent="none", status="error", output="No dispatch function set.")
-            return error, error
+            if not contributions:
+                fallback = True
+                break
 
-        verify_rule = self._find_rule("verify")
-        review_rule = self._find_rule("review")
-
-        if verify_rule is None or review_rule is None:
-            error = AgentResult(agent="none", status="error", output="Missing verify or review dispatch rule.")
-            return error, error
-
-        verify_prompt = self._build_verify_prompt(work_item, dev_result, context)
-        review_prompt = self._build_review_prompt(work_item, dev_result, context)
-
-        # Check if verify and review should run in parallel
-        should_parallel = (
-            verify_rule.parallel_with == "review"
-            or review_rule.parallel_with == "verify"
-        )
-
-        if should_parallel:
-            verify_task = self._dispatch_func(verify_rule.agent, verify_prompt, context)
-            review_task = self._dispatch_func(review_rule.agent, review_prompt, context)
-            verify_raw, review_raw = await asyncio.gather(verify_task, review_task)
-        else:
-            verify_raw = await self._dispatch_func(verify_rule.agent, verify_prompt, context)
-            review_raw = await self._dispatch_func(review_rule.agent, review_prompt, context)
-
-        verify_result = AgentResult(
-            agent=verify_rule.agent,
-            status=verify_raw.get("status", "success"),
-            output=verify_raw.get("output", verify_raw.get("result", "")),
-            metadata=verify_raw,
-        )
-        review_result = AgentResult(
-            agent=review_rule.agent,
-            status=review_raw.get("status", "success"),
-            output=review_raw.get("output", review_raw.get("result", "")),
-            metadata=review_raw,
-        )
-
-        return verify_result, review_result
-
-    async def execute_with_repair(
-        self,
-        work_item: dict[str, Any],
-        context: dict[str, Any],
-    ) -> AgentResult:
-        """Run dev -> verify loop up to max_repair_rounds.
-
-        On verification failure, feeds failure context back to the dev agent
-        for another attempt.
-
-        Args:
-            work_item: Work item dict.
-            context: Execution context.
-
-        Returns:
-            Final AgentResult (dev result from last successful attempt, or
-            the last failed result if all rounds exhausted).
-        """
-        last_dev_result: AgentResult | None = None
-        failure_context: str = ""
-
-        for round_num in range(self.max_repair_rounds):
-            # Build context with failure info from previous round
-            round_context = {**context}
-            if failure_context:
-                round_context["previous_failure"] = failure_context
-                round_context["repair_round"] = round_num
-
-            # Step 1: Dispatch dev agent
-            dev_result = await self.execute_work_item(work_item, round_context)
-            last_dev_result = dev_result
-
-            if dev_result.status in ("error", "failure"):
-                failure_context = dev_result.output
-                continue
-
-            # Step 2: Run verification (verify + review)
-            verify_result, review_result = await self.run_verification(
-                work_item, dev_result, round_context
-            )
-
-            # Check if verification passed
-            verify_passed = verify_result.status == "success"
-            review_passed = review_result.status == "success"
-
-            if verify_passed and review_passed:
-                # All good — attach verification metadata
-                dev_result.metadata["verify_result"] = verify_result
-                dev_result.metadata["review_result"] = review_result
-                return dev_result
-
-            # Build failure context for next round
-            failure_parts = []
-            if not verify_passed:
-                failure_parts.append(f"Verification failed: {verify_result.output}")
-            if not review_passed:
-                failure_parts.append(f"Review failed: {review_result.output}")
-            failure_context = "; ".join(failure_parts)
-
-        # All rounds exhausted
-        if last_dev_result is not None:
-            last_dev_result.status = "failure"
-            last_dev_result.metadata["repair_exhausted"] = True
-            return last_dev_result
-
-        return AgentResult(
-            agent="none",
-            status="failure",
-            output="Repair loop produced no result.",
-        )
-
-    # --- Private helpers ---
-
-    def _parse_dispatch_rules(self, raw_rules: list[dict[str, Any]]) -> list[DispatchRule]:
-        """Parse raw dispatch config into DispatchRule objects."""
-        rules = []
-        for rule in raw_rules:
-            rules.append(DispatchRule(
-                type=rule.get("type", ""),
-                agent=rule.get("agent", ""),
-                parallel_with=rule.get("parallel_with"),
-                model_selection=rule.get("model_selection"),
+            rounds.append(Round(
+                round_number=round_num,
+                contributions=contributions,
             ))
-        return rules
 
-    def _find_rule(self, rule_type: str) -> DispatchRule | None:
-        """Find a dispatch rule by type."""
-        for rule in self._dispatch_rules:
-            if rule.type == rule_type:
-                return rule
-        return None
+            # Check consensus
+            votes = [c.get("stance", "neutral") for c in contributions]
+            if self._has_consensus(votes, consensus_method):
+                break
 
-    def _build_prompt(
-        self, work_item: dict[str, Any], context: dict[str, Any]
-    ) -> str:
-        """Build the prompt for a dev agent dispatch."""
-        parts = [f"Work item: {work_item.get('name', 'unnamed')}"]
-        if "description" in work_item:
-            parts.append(f"Description: {work_item['description']}")
-        if "spec" in work_item:
-            parts.append(f"Spec: {work_item['spec']}")
-        if "context_pack" in context:
-            parts.append(f"Context: {context['context_pack']}")
-        if "previous_failure" in context:
-            parts.append(f"Previous attempt failed: {context['previous_failure']}")
-            parts.append("Please fix the issues and try again.")
-        return "\n".join(parts)
+        return BrainstormResult(
+            mode=mode,
+            rounds=rounds,
+            consensus=self._extract_consensus(rounds),
+            summary=self._generate_summary(rounds, topic),
+            fallback=fallback,
+        )
 
-    def _build_verify_prompt(
+    def detect_consensus(
         self,
-        work_item: dict[str, Any],
-        dev_result: AgentResult,
-        context: dict[str, Any],
-    ) -> str:
-        """Build the prompt for a verify agent dispatch."""
-        parts = [
-            f"Verify work item: {work_item.get('name', 'unnamed')}",
-            f"Dev agent output:\n{dev_result.output}",
-        ]
-        contract = self._output_contracts.get("verify", "")
-        if contract:
-            parts.append(f"Expected output format:\n{contract}")
-        return "\n".join(parts)
+        opinions: list[dict[str, Any]],
+        method: str = "majority",
+    ) -> dict[str, Any]:
+        """检测共识。"""
+        votes = [o["vote"] for o in opinions]
+        return self._analyze_votes(votes, method)
 
-    def _build_review_prompt(
+    def _get_agent_contribution(
         self,
-        work_item: dict[str, Any],
-        dev_result: AgentResult,
-        context: dict[str, Any],
-    ) -> str:
-        """Build the prompt for a review agent dispatch."""
-        parts = [
-            f"Review work item: {work_item.get('name', 'unnamed')}",
-            f"Dev agent output:\n{dev_result.output}",
-        ]
-        contract = self._output_contracts.get("review", "")
-        if contract:
-            parts.append(f"Expected output format:\n{contract}")
-        return "\n".join(parts)
+        agent: str,
+        mode: BrainstormMode,
+        topic: str,
+        context: str,
+        round_number: int,
+        previous_rounds: list[Round],
+    ) -> dict[str, Any] | None:
+        """获取 agent 贡献。实际实现中会调用 agent。"""
+        # Stub: return a placeholder contribution
+        return {
+            "agent": agent,
+            "round": round_number,
+            "opinion": f"{agent} 对 {topic} 的观点 (第{round_number}轮)",
+            "stance": "agree",
+            "reasoning": f"基于 {context} 的分析",
+        }
+
+    def _has_consensus(self, votes: list[str], method: str) -> bool:
+        """判断是否达成共识。"""
+        if not votes:
+            return False
+        if method == "majority":
+            agree_count = sum(1 for v in votes if v == "agree")
+            return agree_count > len(votes) / 2
+        if method == "unanimous":
+            return all(v == "agree" for v in votes)
+        return False
+
+    def _extract_consensus(self, rounds: list[Round]) -> str:
+        """从讨论轮次中提取共识。"""
+        if not rounds:
+            return ""
+        last_round = rounds[-1]
+        opinions = [c.get("opinion", "") for c in last_round.contributions]
+        return "; ".join(opinions[:3])
+
+    def _generate_summary(self, rounds: list[Round], topic: str) -> str:
+        """生成讨论摘要。"""
+        if not rounds:
+            return f"{topic}: 无讨论结果"
+        total_contributions = sum(len(r.contributions) for r in rounds)
+        return f"{topic}: {len(rounds)} 轮讨论, {total_contributions} 个贡献"
+
+    def _analyze_votes(self, votes: list[str], method: str) -> dict[str, Any]:
+        """分析投票结果。"""
+        if not votes:
+            return {"consensus": "none", "ratio": 0.0}
+        agree_count = sum(1 for v in votes if v == "agree")
+        ratio = agree_count / len(votes)
+        if method == "majority":
+            consensus = "agree" if ratio > 0.5 else "disagree"
+        elif method == "unanimous":
+            consensus = "agree" if ratio == 1.0 else "disagree"
+        else:
+            consensus = "agree" if ratio > 0.5 else "disagree"
+        return {"consensus": consensus, "ratio": ratio}

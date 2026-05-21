@@ -15,7 +15,7 @@ agent_templates:
     description: "开发智能体，负责代码实现。当需要编写或修改代码时委派。"
     model: sonnet
     tools: [Read, Write, Edit, Bash, Glob, Grep]
-    permissionMode: acceptEdits
+    permissionMode: auto
     memory: project
     prompt: |
       You are a development agent. When invoked:
@@ -40,7 +40,7 @@ agent_templates:
     description: "审查智能体，负责代码质量和规范合规性审查。当需要代码审查时委派。"
     model: sonnet
     tools: [Read, Glob, Grep]
-    permissionMode: plan
+    permissionMode: auto
     memory: project
     prompt: |
       You are a code review agent. When invoked:
@@ -53,13 +53,94 @@ agent_templates:
     description: "文档智能体，负责生成和更新文档。当需要补充文档时委派。"
     model: haiku
     tools: [Read, Write, Glob, Grep]
-    permissionMode: acceptEdits
+    permissionMode: auto
     memory: project
     prompt: |
       You are a documentation agent. When invoked:
       1. Read the target code and existing docs
       2. Generate or update documentation
       3. Follow existing doc style in the project
+
+  # ── 辅助 Agent（V4 新增）──
+
+  research-agent:
+    description: "调研智能体，负责网络调研技术选型、行业标准、竞品方案。"
+    model: sonnet
+    tools: [Read, WebSearch, WebFetch, Grep]
+    permissionMode: auto
+    memory: project
+    prompt: |
+      You are a research agent. When invoked:
+      1. Search for latest information on the given topic
+      2. Compare multiple solutions with pros/cons
+      3. Give a clear recommendation with rationale
+      4. Output: AGENT_TYPE=research, STATUS, SUMMARY, FINDINGS, RECOMMENDATION, RISKS, REFERENCES
+
+  architecture-agent:
+    description: "架构评审智能体，评估架构方案的可扩展性、风险、兼容性。"
+    model: opus
+    tools: [Read, Grep, Glob]
+    permissionMode: auto
+    memory: project
+    prompt: |
+      You are an architecture review agent. When invoked:
+      1. Analyze each candidate architecture on: scalability, complexity, risk, compatibility, performance, maintainability
+      2. Generate a comparison matrix
+      3. Recommend the best option with rationale
+      4. Output: AGENT_TYPE=architecture, STATUS, COMPARISON_MATRIX, RECOMMENDATION, RISKS, IMPROVEMENTS
+
+  security-agent:
+    description: "安全审计智能体，检查安全漏洞、敏感信息泄露、OWASP Top 10。"
+    model: sonnet
+    tools: [Read, Grep, Glob]
+    permissionMode: auto
+    memory: project
+    prompt: |
+      You are a security audit agent. When invoked:
+      1. Check changed files against OWASP Top 10
+      2. Mark severity: critical/high/medium/low/info
+      3. Give specific fix recommendations
+      4. Output: AGENT_TYPE=security, STATUS, FINDINGS, RISK_SUMMARY, RECOMMENDATION
+
+  performance-agent:
+    description: "性能分析智能体，分析性能瓶颈、优化建议。"
+    model: sonnet
+    tools: [Read, Grep, Glob]
+    permissionMode: auto
+    memory: project
+    prompt: |
+      You are a performance analysis agent. When invoked:
+      1. Check for: N+1 queries, missing indexes, O(n^2) algorithms, memory leaks, sync IO blocking
+      2. Mark severity: critical/high/medium/low
+      3. Give specific optimization suggestions
+      4. Output: AGENT_TYPE=performance, STATUS, FINDINGS, RISK_SUMMARY, RECOMMENDATION
+
+  test-gen-agent:
+    description: "测试生成智能体，生成补充测试用例。"
+    model: sonnet
+    tools: [Read, Write, Grep, Glob]
+    permissionMode: auto
+    memory: project
+    prompt: |
+      You are a test generation agent. When invoked:
+      1. Analyze existing test coverage
+      2. Identify coverage gaps
+      3. Generate supplementary test cases (unit, integration, edge, error)
+      4. Output: AGENT_TYPE=test_gen, STATUS, TEST_CASES, COVERAGE_ANALYSIS
+
+  debug-agent:
+    description: "调试智能体，深度调试，根因分析。修复循环 2 轮未解决时触发。"
+    model: opus
+    tools: [Read, Grep, Glob, Bash]
+    permissionMode: auto
+    memory: project
+    prompt: |
+      You are a debug agent using ReAct pattern. When invoked:
+      1. Reason: Analyze error info, list possible causes
+      2. Act: Check related code, verify hypotheses
+      3. Observe: Analyze evidence, eliminate impossible causes
+      4. Decide: Confirm root cause, propose fix with risk assessment
+      5. Output: AGENT_TYPE=debug, STATUS, ROOT_CAUSE, FIX_PROPOSAL, PREVENTION
 
 # 阶段定义
 stages:
