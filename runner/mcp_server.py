@@ -540,6 +540,47 @@ TOOLS: list[dict] = [
             "required": ["run_id", "criteria_id", "status"],
         },
     },
+    {
+        "name": "reqflow_full_flow",
+        "description": "强制全流程入口，跳过路由分析直接使用 L3 管线（11 阶段）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "requirement": {"type": "string", "description": "需求描述"},
+                "change_name": {"type": "string", "description": "变更名称（可选）"},
+            },
+            "required": ["requirement"],
+        },
+    },
+    {
+        "name": "reqflow_brainstorm",
+        "description": "触发多 Agent 头脑风暴（round-robin/panel-of-experts/adversarial-debate/critique-refine）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["round-robin", "panel-of-experts", "adversarial-debate", "critique-refine"], "description": "头脑风暴模式"},
+                "agents": {"type": "array", "items": {"type": "string"}, "description": "参与 agent 列表"},
+                "topic": {"type": "string", "description": "讨论主题"},
+                "context": {"type": "string", "description": "上下文信息"},
+                "max_rounds": {"type": "integer", "description": "最大轮次", "default": 3},
+            },
+            "required": ["mode", "agents", "topic", "context"],
+        },
+    },
+    {
+        "name": "reqflow_confidence",
+        "description": "评估或查询置信度（3-tier: high/medium/low + 自动路由）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "completeness": {"type": "number", "description": "完整性 (0-1)"},
+                "consistency": {"type": "number", "description": "一致性 (0-1)"},
+                "accuracy": {"type": "number", "description": "准确性 (0-1)"},
+                "retry_count": {"type": "integer", "description": "已重试次数", "default": 0},
+            },
+            "required": ["completeness", "consistency", "accuracy"],
+        },
+    },
 ]
 
 
@@ -2059,6 +2100,132 @@ async def _handle_multi_repo_switch(arguments: dict) -> list:
 
 
 # ---------------------------------------------------------------------------
+# V5 新增工具实现
+# ---------------------------------------------------------------------------
+
+
+async def _handle_full_flow(arguments: dict) -> list:
+    """强制全流程入口，跳过路由分析直接使用 L3 管线。"""
+    requirement = arguments.get("requirement", "")
+    change_name = arguments.get("change_name", "")
+
+    if not requirement:
+        return [TextContent(type="text", text="[错误] requirement 参数不能为空")]
+
+    # Force L3 routing
+    from reqflow.core.router import RoutingLevel, RoutingDecision, EntryPoint
+    routing = RoutingDecision(
+        level=RoutingLevel.L3,
+        reason="用户强制全流程模式",
+        confidence=1.0,
+        signals=["full_flow_override"],
+        suggested_workflow="main-flow",
+        entry_point=EntryPoint.PRD,
+    )
+
+    # Create change directory
+    from reqflow.core.change_manager import ChangeManager
+    import time
+    if not change_name:
+        change_name = f"change-{int(time.time())}"
+    cm = ChangeManager(".reqflow")
+    change = cm.create_change(change_name, requirement)
+    run_id = f"run-{time.strftime('%Y%m%d-%H%M%S')}"
+    run_dir = cm.create_run(change_name, run_id)
+
+    # Generate execution skill
+    from reqflow.core.skill_generator import generate_execution_skill, save_execution_skill
+    from reqflow.core.context_scanner import scan_project
+    structure = scan_project(".")
+    skill = generate_execution_skill(
+        run_id=run_id,
+        requirement=requirement,
+        routing=routing,
+        project_structure=structure,
+    )
+    skill_path = save_execution_skill(skill, run_dir)
+
+    # Save state
+    from reqflow.core.state_manager import StateManager
+    sm = StateManager(run_dir)
+    sm.save_state({
+        "run_id": run_id,
+        "change_name": change_name,
+        "requirement": requirement,
+        "routing_level": "delivery_loop",
+        "stages": skill.stages,
+        "current_stage": 0,
+        "status": "active",
+    })
+
+    return [TextContent(type="text", text=json.dumps({
+        "status": "started",
+        "run_id": run_id,
+        "change_name": change_name,
+        "change_dir": change.path,
+        "routing_level": "delivery_loop",
+        "stages_count": len(skill.stages),
+        "exec_skill_path": skill_path,
+    }, ensure_ascii=False, indent=2))]
+
+
+async def _handle_brainstorm(arguments: dict) -> list:
+    """触发多 Agent 头脑风暴。"""
+    mode = arguments.get("mode", "round-robin")
+    agents = arguments.get("agents", [])
+    topic = arguments.get("topic", "")
+    context = arguments.get("context", "")
+    max_rounds = arguments.get("max_rounds", 3)
+
+    from reqflow.core.agent_coordinator import AgentCoordinator, BrainstormMode
+    coord = AgentCoordinator()
+    try:
+        brainstorm_mode = BrainstormMode(mode)
+    except ValueError:
+        brainstorm_mode = BrainstormMode.ROUND_ROBIN
+
+    result = coord.brainstorm(
+        mode=brainstorm_mode,
+        agents=agents,
+        topic=topic,
+        context=context,
+        max_rounds=max_rounds,
+    )
+
+    return [TextContent(type="text", text=json.dumps({
+        "mode": result.mode.value,
+        "rounds_count": len(result.rounds),
+        "consensus": result.consensus,
+        "summary": result.summary,
+        "fallback": result.fallback,
+    }, ensure_ascii=False, indent=2))]
+
+
+async def _handle_confidence(arguments: dict) -> list:
+    """查询或评估置信度。"""
+    completeness = arguments.get("completeness", 1.0)
+    consistency = arguments.get("consistency", 1.0)
+    accuracy = arguments.get("accuracy", 1.0)
+    retry_count = arguments.get("retry_count", 0)
+
+    from reqflow.core.confidence import ConfidenceAssessor
+    assessor = ConfidenceAssessor()
+    result = assessor.assess(
+        completeness=completeness,
+        consistency=consistency,
+        accuracy=accuracy,
+        retry_count=retry_count,
+    )
+
+    return [TextContent(type="text", text=json.dumps({
+        "level": result.level.value,
+        "score": round(result.score, 2),
+        "action": result.action,
+        "reasons": result.reasons,
+    }, ensure_ascii=False, indent=2))]
+
+
+# ---------------------------------------------------------------------------
 # 工具处理器注册表（必须在 create_server 之前定义）
 # ---------------------------------------------------------------------------
 
@@ -2092,6 +2259,10 @@ TOOL_HANDLERS = {
     "reqflow_blocker_check": _handle_blocker_check,
     "reqflow_multi_repo_switch": _handle_multi_repo_switch,
     "reqflow_acceptance_update": _handle_acceptance_update,
+    # --- V5 新增工具 ---
+    "reqflow_full_flow": _handle_full_flow,
+    "reqflow_brainstorm": _handle_brainstorm,
+    "reqflow_confidence": _handle_confidence,
 }
 
 
