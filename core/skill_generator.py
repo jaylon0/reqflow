@@ -327,6 +327,52 @@ _AUXILIARY_AGENTS = {
     "局部验证": ["test-gen-agent", "security-agent"],
 }
 
+# Agent 角色定义 — 在对话中输出时使用
+_AGENT_ROLES = {
+    "research-agent": {
+        "role": "调研分析",
+        "model": "sonnet",
+        "responsibility": "技术调研、竞品分析、技术选型、探索性分析",
+        "keywords": "调研, 分析, 竞品, 技术选型, 探索",
+    },
+    "architecture-agent": {
+        "role": "架构设计",
+        "model": "opus",
+        "responsibility": "架构设计、设计模式、模块划分、重构规划",
+        "keywords": "架构, 设计模式, 重构, 模块划分",
+    },
+    "security-agent": {
+        "role": "安全审查",
+        "model": "opus",
+        "responsibility": "安全审查、鉴权方案、注入防护、XSS/CSRF 防御、加密方案",
+        "keywords": "安全, 鉴权, 注入, XSS, CSRF, 加密",
+    },
+    "performance-agent": {
+        "role": "性能优化",
+        "model": "sonnet",
+        "responsibility": "性能分析、缓存策略、查询优化、并发处理、内存优化",
+        "keywords": "性能, 缓存, 查询优化, 并发, 内存",
+    },
+    "test-gen-agent": {
+        "role": "测试生成",
+        "model": "sonnet",
+        "responsibility": "测试用例设计、覆盖率分析、边界条件测试、回归测试",
+        "keywords": "测试, 用例, 覆盖率, 边界",
+    },
+    "debug-agent": {
+        "role": "调试修复",
+        "model": "sonnet",
+        "responsibility": "错误诊断、异常排查、堆栈分析、问题定位与修复",
+        "keywords": "调试, 错误, 异常, 堆栈, 排查",
+    },
+    "doc-agent": {
+        "role": "文档生成",
+        "model": "sonnet",
+        "responsibility": "文档编写、注释规范、README 生成、API 文档维护",
+        "keywords": "文档, 注释, README, API 文档",
+    },
+}
+
 
 def _generate_standard_actions(stage_name: str, routing: RoutingDecision, auto_pilot: bool = False) -> str:
     """生成阶段标准动作 — 每个阶段都有的自检、问题发现、确认点。"""
@@ -449,23 +495,44 @@ def _generate_brainstorming_section(stage_name: str, routing: RoutingDecision) -
 
     agent_list = ", ".join(f"`{a}`" for a in agents)
 
+    # 生成 agent 角色描述表
+    role_lines = []
+    for agent_name in agents:
+        info = _AGENT_ROLES.get(agent_name, {})
+        role = info.get("role", "通用")
+        model = info.get("model", "sonnet")
+        resp = info.get("responsibility", "通用任务")
+        role_lines.append(f"| `{agent_name}` | {role} | {model} | {resp} |")
+    role_table = "\n".join(role_lines)
+
     return f"""
 ### 多 Agent 协作（⛔ 必须执行）
 
 **模式:** {mode} | **轮次:** {max_rounds} | **价值级别:** {value_level}
-**参与 Agent:** {agent_list}
+
+**参与 Agent 角色表（必须在对话中输出）：**
+
+| Agent | 角色 | 模型 | 职责 |
+|-------|------|------|------|
+{role_table}
+
+**Subagent 定位说明：**
+- 每个 Agent 是独立的 subagent，拥有隔离的上下文
+- 主 Agent（协调者）负责调度 subagent、汇总结果、处理分歧
+- subagent 之间不直接通信，通过主 Agent 中转
 
 **执行流程（必须在对话中完整输出）：**
-1. 调用 `reqflow_brainstorm(mode="{mode}", agents=[{repr(agents)}], topic="{stage_name}", context="本阶段上下文")`
-2. **每个 agent 的发言必须在对话中逐条展示**，格式：
+1. **首先输出上方 Agent 角色表**，让用户知道哪些 agent 参与及其职责
+2. 调用 `reqflow_brainstorm(mode="{mode}", agents=[{repr(agents)}], topic="{stage_name}", context="本阶段上下文")`
+3. **每个 agent 的发言必须在对话中逐条展示**，格式：
    ```
-   🔵 [agent-name]: <具体观点和分析>
+   🔵 [agent-name]（角色）: <具体观点和分析>
    ```
-3. 记录讨论过程到 `brainstorming/{stage_name}.md`
-4. **输出共识结果**，作为本阶段决策参考
-5. 如果有分歧，展示正反观点和最终裁决
+4. 记录讨论过程到 `brainstorming/{stage_name}.md`
+5. **输出共识结果**，作为本阶段决策参考
+6. 如果有分歧，展示正反观点和最终裁决
 
-**白盒要求：** 用户必须能看到每个 agent 的完整推理过程，不能只展示结论。
+**白盒要求：** 用户必须能看到每个 agent 的角色、完整推理过程和决策依据，不能只展示结论。
 **如果 agent 不可用：** 降级为单 agent 模式，在对话中说明降级原因。
 """
 
