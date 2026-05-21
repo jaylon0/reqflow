@@ -328,11 +328,19 @@ def _generate_standard_actions(stage_name: str, routing: RoutingDecision) -> str
         "",
         "#### 4. 对话中展示摘要（⛔ 必须执行）",
         "",
-        "**不能只写到文件里。必须在对话中包含：**",
-        "- 本阶段做了什么（1-3 句话）",
-        "- 关键发现或决策",
-        "- 需要用户关注的问题",
-        "- 文件路径（供需要详情时查看）",
+        "**不能只写到文件里。必须在对话中包含以下内容：**",
+        "",
+        "1. **本阶段做了什么**（具体操作，不是泛泛而谈）",
+        "2. **关键发现**（发现的问题、风险、机会）",
+        "3. **决策和理由**（做了什么选择、为什么）",
+        "4. **改进建议**（可以优化的地方）",
+        "5. **置信度**（high/medium/low + 原因）",
+        "6. **文件路径**（供需要详情时查看）",
+        "",
+        "**可视化要求：**",
+        "- 使用 ASCII 表格展示对比/状态信息",
+        "- 使用进度条展示完成度/置信度",
+        "- 使用 Mermaid 图表展示流程/架构（如果适用）",
         "",
         "#### 5. 阶段确认（⛔ 硬停止点）",
         "- 展示本阶段产出摘要（在对话中，不是文件里）",
@@ -342,9 +350,61 @@ def _generate_standard_actions(stage_name: str, routing: RoutingDecision) -> str
         "- 用户确认 → 进入下一阶段",
         "- 用户拒绝 → 询问具体问题 → 修复 → 重新展示 → 再次等待确认",
         "- **修复循环无次数上限 — 直到用户确认**",
+        "",
+        "#### 6. 置信度评估（⛔ 必须执行）",
+        "",
+        "- 评估本阶段产出的置信度（high/medium/low）",
+        "- 评估维度：完整性（产出物是否齐全）、一致性（产出物是否矛盾）、准确性（是否符合需求）",
+        "- 调用 `reqflow_confidence(completeness=..., consistency=..., accuracy=...)` 获取路由建议",
+        "- **high** → 自动进入下一阶段，在报告中展示置信度",
+        "- **medium** → 暂停，列出不确定点，等待用户判断",
+        "- **low** → 自动重试（最多 2 次），仍 low 则升级到用户",
+        "- low 必须说明具体原因和重试计划",
     ])
 
     return "\n".join(lines)
+
+
+def _generate_brainstorming_section(stage_name: str, routing: RoutingDecision) -> str:
+    """生成头脑风暴指令（每个阶段）。"""
+    is_deep = routing.level in (RoutingLevel.L2, RoutingLevel.L3)
+    if not is_deep:
+        return ""
+
+    high_value_stages = {"PRD理解", "上下文发现", "技术方案", "代码审查"}
+    medium_value_stages = {"Spec治理", "工作流智能", "实施计划", "交付验证"}
+
+    if stage_name in high_value_stages:
+        mode = "panel-of-experts" if stage_name in {"技术方案", "上下文发现"} else "round-robin"
+        max_rounds = 3
+        value_level = "高价值"
+    elif stage_name in medium_value_stages:
+        mode = "critique-refine" if stage_name in {"Spec治理", "代码审查"} else "round-robin"
+        max_rounds = 1
+        value_level = "中价值"
+    else:
+        return ""
+
+    agents = _AUXILIARY_AGENTS.get(stage_name, [])
+    if not agents:
+        return ""
+
+    agent_list = ", ".join(f"`{a}`" for a in agents)
+
+    return f"""
+### 多 Agent 头脑风暴（⛔ 建议执行）
+
+**模式:** {mode} | **轮次:** {max_rounds} | **价值级别:** {value_level}
+**参与 Agent:** {agent_list}
+
+**执行流程：**
+1. 调用 `reqflow_brainstorm(mode="{mode}", agents=[...], topic="{stage_name}", context="...")`
+2. 每个 agent 从专业角度发表观点
+3. 记录讨论过程到 `brainstorming/{stage_name}.md`
+4. 输出共识结果，作为本阶段决策参考
+
+**如果 agent 不可用：** 降级为单 agent 模式，继续执行
+"""
 
 
 def _generate_requirement_inquiry(routing: RoutingDecision) -> str:
@@ -551,6 +611,7 @@ def _generate_stage(
     # 启动和归档阶段不加标准动作（它们有自己的特殊流程）
     skip_stages = {"启动", "归档", "总结"}
     if stage_name not in skip_stages:
+        stage_content += _generate_brainstorming_section(stage_name, routing)
         stage_content += _generate_standard_actions(stage_name, routing)
 
     return stage_content
