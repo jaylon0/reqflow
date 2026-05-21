@@ -1729,13 +1729,13 @@ async def _handle_tool_call(arguments: dict) -> list:
 
     from reqflow.core.tool_bridge_mcp import ToolBridgeMCP
     bridge = ToolBridgeMCP()
-    bridge.load_config()
 
-    result = bridge.call(tool_name, method, params)
-    if result.success:
-        return [TextContent(type="text", text=f"[{tool_name}] {method}: {result.output}")]
-    else:
-        return [TextContent(type="text", text=f"[错误] {tool_name}.{method} 失败: {result.error}")]
+    import asyncio
+    try:
+        result = asyncio.get_event_loop().run_until_complete(bridge.call(tool_name, params))
+        return [TextContent(type="text", text=f"[{tool_name}] {method}: {result}")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"[错误] {tool_name}.{method} 失败: {e}")]
 
 
 async def _handle_memory_save(arguments: dict) -> list:
@@ -1750,11 +1750,8 @@ async def _handle_memory_save(arguments: dict) -> list:
 
     from reqflow.core.memory_manager import MemoryManager
     run_path = _resolve_run_dir(run_id)
-    memory_path = str(run_path / "memory.md")
-    mm = MemoryManager(memory_path)
-    mm.load_from_file()
-    mm.save(category, content, stage)
-    mm.save_to_file()
+    mm = MemoryManager(str(run_path))
+    mm.save(category, content, stage or content)
 
     return [TextContent(type="text", text=f"记忆已保存: [{category}] {content[:50]}...")]
 
@@ -1768,12 +1765,10 @@ async def _handle_memory_load(arguments: dict) -> list:
 
     from reqflow.core.memory_manager import MemoryManager
     run_path = _resolve_run_dir(run_id)
-    memory_path = str(run_path / "memory.md")
-    mm = MemoryManager(memory_path)
-    mm.load_from_file()
-
-    md = mm.export_markdown()
-    return [TextContent(type="text", text=md)]
+    mm = MemoryManager(str(run_path))
+    all_memories = mm.load()
+    import json
+    return [TextContent(type="text", text=json.dumps(all_memories, ensure_ascii=False, indent=2))]
 
 
 async def _handle_git_check(arguments: dict) -> list:
@@ -1782,20 +1777,22 @@ async def _handle_git_check(arguments: dict) -> list:
 
     from reqflow.core.git_workflow import GitWorkflow
     gw = GitWorkflow(run_dir)
-    status = gw.check_branch()
-    uncommitted = gw.check_uncommitted()
+    status = gw.check_status()
 
     lines = [
-        f"当前分支: {status.current_branch}",
-        f"保护分支: {'是' if status.is_protected else '否'}",
+        f"当前分支: {status.branch}",
+        f"主分支: {'是' if status.is_main_branch else '否'}",
         f"最后提交: {status.last_commit}",
+        f"工作区: {'干净' if status.is_clean else '有变更'}",
     ]
-    if uncommitted:
-        lines.append(f"未提交文件 ({len(uncommitted)}):")
-        for f in uncommitted[:10]:
+    if status.modified_files:
+        lines.append(f"已修改文件 ({len(status.modified_files)}):")
+        for f in status.modified_files[:10]:
             lines.append(f"  {f}")
-    else:
-        lines.append("未提交文件: 无")
+    if status.untracked_files:
+        lines.append(f"未跟踪文件 ({len(status.untracked_files)}):")
+        for f in status.untracked_files[:10]:
+            lines.append(f"  {f}")
 
     return [TextContent(type="text", text="\n".join(lines))]
 
@@ -2013,24 +2010,24 @@ async def _handle_multi_repo_switch(arguments: dict) -> list:
     repo_name = arguments.get("repo_name", "")
 
     from reqflow.core.multi_repo import MultiRepo
-    mr = MultiRepo(project_dir)
-    repos = mr.detect_repos()
-
-    if not repos:
-        return [TextContent(type="text", text="未检测到 git 仓库。")]
+    mr = MultiRepo()
 
     if not repo_name:
-        lines = ["检测到的仓库:"]
+        repos = mr.list_repos()
+        if not repos:
+            return [TextContent(type="text", text="未注册任何仓库。")]
+        lines = ["已注册的仓库:"]
         for r in repos:
-            current = " (当前)" if r == mr.get_current_repo() else ""
-            lines.append(f"  - {r.name}: {r.path} [{r.branch}]{current}")
+            primary = " (主仓库)" if r["is_primary"] else ""
+            lines.append(f"  - {r['name']}: {r['path']} [{r['branch']}]{primary}")
         return [TextContent(type="text", text="\n".join(lines))]
 
-    try:
-        repo = mr.switch_repo(repo_name)
-        return [TextContent(type="text", text=f"已切换到仓库: {repo.name} ({repo.path}) [{repo.branch}]")]
-    except ValueError as e:
-        return [TextContent(type="text", text=f"[错误] {e}")]
+    repo = mr.get_by_name(repo_name)
+    if repo:
+        primary = " (主仓库)" if repo.is_primary else ""
+        return [TextContent(type="text", text=f"仓库信息: {repo.name} ({repo.path}) [{repo.branch}]{primary}")]
+    else:
+        return [TextContent(type="text", text=f"[错误] 未找到仓库: {repo_name}")]
 
 
 # ---------------------------------------------------------------------------

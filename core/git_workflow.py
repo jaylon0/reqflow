@@ -1,52 +1,42 @@
-"""ReqFlow Git Workflow — Git 工作流强制。
+"""ReqFlow Git Workflow — Git 工作流检查。
 
-强制规则：
-- master/main 上禁止直接开发
-- 单次提交尽量小，不攒代码
-- BLOCKER 修复后单独 commit
+提供 Git 仓库状态检查能力。
 """
 
 from __future__ import annotations
 
 import logging
 import subprocess
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class BranchStatus:
-    current_branch: str
-    is_protected: bool
-    uncommitted_files: list[str]
-    last_commit: str
+MAIN_BRANCHES = {"master", "main"}
 
 
 @dataclass
-class CommitResult:
-    success: bool
-    hash: str = ""
-    message: str = ""
-    error: str = ""
-
-
-PROTECTED_BRANCHES = {"master", "main", "develop", "release"}
+class GitStatus:
+    branch: str = ""
+    is_clean: bool = True
+    modified_files: list[str] = field(default_factory=list)
+    untracked_files: list[str] = field(default_factory=list)
+    last_commit: str = ""
+    is_main_branch: bool = False
 
 
 class GitWorkflow:
-    """Git 工作流强制。"""
+    """Git 工作流检查。"""
 
-    def __init__(self, repo_path: str = "."):
-        self.repo_path = repo_path
+    def __init__(self, repo_dir: str = "."):
+        """Takes repo_dir string."""
+        self.repo_dir = repo_dir
 
     def _run_git(self, *args: str) -> tuple[int, str]:
         """执行 git 命令。"""
         try:
             result = subprocess.run(
                 ["git"] + list(args),
-                cwd=self.repo_path,
+                cwd=self.repo_dir,
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -55,65 +45,33 @@ class GitWorkflow:
         except Exception as e:
             return -1, str(e)
 
-    def check_branch(self) -> BranchStatus:
-        """检查当前分支状态。"""
+    def check_status(self) -> GitStatus:
+        """Check git status and return GitStatus object."""
         _, branch = self._run_git("rev-parse", "--abbrev-ref", "HEAD")
-        _, uncommitted = self._run_git("status", "--porcelain")
+        _, porcelain = self._run_git("status", "--porcelain")
         _, last_commit = self._run_git("log", "-1", "--format=%s")
 
-        uncommitted_files = [line.strip() for line in uncommitted.split("\n") if line.strip()]
-        is_protected = branch in PROTECTED_BRANCHES
+        modified_files = []
+        untracked_files = []
+        for line in porcelain.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            status_code = line[:2]
+            filepath = line[3:]
+            if status_code.strip() == "??":
+                untracked_files.append(filepath)
+            else:
+                modified_files.append(filepath)
 
-        return BranchStatus(
-            current_branch=branch,
-            is_protected=is_protected,
-            uncommitted_files=uncommitted_files,
+        is_clean = len(modified_files) == 0 and len(untracked_files) == 0
+        is_main_branch = branch in MAIN_BRANCHES
+
+        return GitStatus(
+            branch=branch,
+            is_clean=is_clean,
+            modified_files=modified_files,
+            untracked_files=untracked_files,
             last_commit=last_commit,
+            is_main_branch=is_main_branch,
         )
-
-    def enforce_branch(self, feature_name: str) -> str:
-        """强制创建功能分支。如果在保护分支上，自动切换。"""
-        status = self.check_branch()
-        if not status.is_protected:
-            return status.current_branch
-
-        branch_name = f"feature/{feature_name}"
-        code, _ = self._run_git("checkout", "-b", branch_name)
-        if code == 0:
-            logger.info("已创建功能分支: %s", branch_name)
-            return branch_name
-        else:
-            logger.error("创建功能分支失败: %s", branch_name)
-            return status.current_branch
-
-    def commit(self, message: str) -> CommitResult:
-        """标准化提交。"""
-        code, _ = self._run_git("add", "-A")
-        if code != 0:
-            return CommitResult(success=False, error="git add 失败")
-
-        code, output = self._run_git("commit", "-m", message)
-        if code != 0:
-            return CommitResult(success=False, error=f"git commit 失败: {output}")
-
-        _, hash_val = self._run_git("rev-parse", "--short", "HEAD")
-        return CommitResult(success=True, hash=hash_val, message=message)
-
-    def check_uncommitted(self) -> list[str]:
-        """检查未提交的文件。"""
-        _, output = self._run_git("status", "--porcelain")
-        return [line.strip() for line in output.split("\n") if line.strip()]
-
-    def is_on_protected_branch(self) -> bool:
-        """检查是否在保护分支上。"""
-        status = self.check_branch()
-        return status.is_protected
-
-    def to_dict(self) -> dict[str, Any]:
-        """导出为字典。"""
-        status = self.check_branch()
-        return {
-            "branch": status.current_branch,
-            "is_master": status.is_protected,
-            "uncommitted": status.uncommitted_files,
-        }

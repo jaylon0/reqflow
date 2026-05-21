@@ -7,126 +7,52 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class MemoryEntry:
-    category: str     # decision | constraint | naming | pattern
-    content: str
-    stage: str = ""
-    timestamp: str = ""
-
-    def __post_init__(self):
-        if not self.timestamp:
-            self.timestamp = datetime.now().isoformat()
-
-
 class MemoryManager:
     """长期记忆管理器。"""
 
-    def __init__(self, memory_path: str = "memory.md"):
-        self.memory_path = memory_path
-        self._entries: list[MemoryEntry] = []
+    def __init__(self, run_dir: str):
+        """Takes run_dir string."""
+        self.run_dir = run_dir
+        self._store: dict[str, dict[str, str]] = {}
 
-    def save(self, category: str, content: str, stage: str = "") -> MemoryEntry:
-        """保存一条记忆。"""
-        entry = MemoryEntry(category=category, content=content, stage=stage)
-        self._entries.append(entry)
-        logger.info("保存记忆 [%s]: %s", category, content[:50])
-        return entry
+    def save(self, category: str, key: str, value: str) -> dict[str, Any]:
+        """Save a memory entry with category, key, value."""
+        if category not in self._store:
+            self._store[category] = {}
+        self._store[category][key] = value
+        logger.info("保存记忆 [%s/%s]: %s", category, key, value[:50] if len(value) > 50 else value)
+        self._write_markdown()
+        return {"category": category, "key": key, "value": value}
 
-    def load(self) -> list[MemoryEntry]:
-        """加载所有记忆。"""
-        return list(self._entries)
+    def load(self, category: str | None = None, key: str | None = None) -> dict[str, Any]:
+        """Load memories. No args = all, category = by category, category+key = specific."""
+        if category is not None and key is not None:
+            value = self._store.get(category, {}).get(key)
+            if value is not None:
+                return {"category": category, "key": key, "value": value}
+            return {}
+        if category is not None:
+            entries = self._store.get(category, {})
+            return {"category": category, "entries": {k: v for k, v in entries.items()}}
+        # All
+        return dict(self._store)
 
-    def get_by_category(self, category: str) -> list[MemoryEntry]:
-        """按分类获取记忆。"""
-        return [e for e in self._entries if e.category == category]
-
-    def get_decisions(self) -> list[MemoryEntry]:
-        return self.get_by_category("decision")
-
-    def get_constraints(self) -> list[MemoryEntry]:
-        return self.get_by_category("constraint")
-
-    def get_naming_rules(self) -> list[MemoryEntry]:
-        return self.get_by_category("naming")
-
-    def get_patterns(self) -> list[MemoryEntry]:
-        return self.get_by_category("pattern")
-
-    def export_markdown(self) -> str:
-        """导出为 memory.md 格式。"""
-        if not self._entries:
-            return "# 长期记忆\n\n（空）"
-
+    def _write_markdown(self) -> None:
+        """Write memory.md to run_dir."""
+        md_path = os.path.join(self.run_dir, "memory.md")
+        Path(self.run_dir).mkdir(parents=True, exist_ok=True)
         lines = ["# 长期记忆", ""]
-
-        categories = {
-            "decision": "关键决策",
-            "constraint": "特殊限制",
-            "naming": "跨模块命名规则",
-            "pattern": "模式记录",
-        }
-
-        for cat_key, cat_name in categories.items():
-            entries = self.get_by_category(cat_key)
-            if not entries:
-                continue
-            lines.append(f"## {cat_name}")
-            for e in entries:
-                stage_info = f"（阶段：{e.stage}）" if e.stage else ""
-                lines.append(f"- {e.content} {stage_info}")
+        for cat, entries in self._store.items():
+            lines.append(f"## {cat}")
+            for k, v in entries.items():
+                lines.append(f"- **{k}**: {v}")
             lines.append("")
-
-        return "\n".join(lines)
-
-    def save_to_file(self, path: str | None = None) -> str:
-        """保存到文件。"""
-        output_path = path or self.memory_path
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        content = self.export_markdown()
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info("记忆已保存到: %s", output_path)
-        return output_path
-
-    def load_from_file(self, path: str | None = None) -> None:
-        """从文件加载。"""
-        load_path = path or self.memory_path
-        if not os.path.exists(load_path):
-            return
-
-        with open(load_path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        # 简单解析 markdown
-        current_category = ""
-        for line in content.split("\n"):
-            line = line.strip()
-            if line.startswith("## "):
-                name = line[3:].strip()
-                cat_map = {"关键决策": "decision", "特殊限制": "constraint",
-                           "跨模块命名规则": "naming", "模式记录": "pattern"}
-                current_category = cat_map.get(name, "")
-            elif line.startswith("- ") and current_category:
-                entry_content = line[2:].strip()
-                self.save(current_category, entry_content)
-
-    def to_list(self) -> list[dict[str, Any]]:
-        """导出为字典列表。"""
-        return [{"category": e.category, "content": e.content,
-                 "stage": e.stage, "timestamp": e.timestamp} for e in self._entries]
-
-    def load_from_list(self, data: list[dict[str, Any]]) -> None:
-        """从字典列表加载。"""
-        for item in data:
-            self._entries.append(MemoryEntry(
-                category=item["category"], content=item["content"],
-                stage=item.get("stage", ""), timestamp=item.get("timestamp", "")))
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        logger.info("记忆已保存到: %s", md_path)
