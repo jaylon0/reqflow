@@ -71,6 +71,7 @@ _STAGE_TEMPLATES = {
         "Agent执行",
         "代码审查",
         "交付验证",
+        "总结",
         "归档",
     ],
     RoutingLevel.L3: [
@@ -84,6 +85,7 @@ _STAGE_TEMPLATES = {
         "Agent执行",
         "代码审查",
         "交付验证",
+        "总结",
         "归档",
     ],
 }
@@ -598,7 +600,7 @@ def _generate_stage(
         "代码梳理": _stage_context_discovery,
         "生成代码": _stage_agent_execution,
         "跨模块终检": _stage_code_review,
-        "总结": _stage_archive,
+        "总结": _stage_summary,
         # L0/L1 特有
         "分析报告": _stage_analysis,
         "轻量实现": _stage_light_impl,
@@ -1149,6 +1151,18 @@ def _stage_agent_execution(
         "| 6 | 提交 | commit msg 统一管理 |",
         "| 7 | 更新 state | 更新 completed_modules |",
         "",
+        "### TDD 强制检查（⛔ 生码阶段专用）",
+        "",
+        "**每个模块必须遵循 Red-Green-Refactor 循环：**",
+        "1. **Red** — 先写失败测试（failing tests count > 0）",
+        "2. **Green** — 实现最小代码使测试通过",
+        "3. **Refactor** — 优化代码，测试仍然全部通过",
+        "",
+        "**门禁检查：**",
+        "- 开始实现前：`reqflow_verify(gate=\"tdd-gate\")` — failing tests > 0",
+        "- 实现完成后：所有测试必须通过（failing tests = 0）",
+        "- 重构后：测试仍然全部通过",
+        "",
         "### 7.5 修复循环（Loop Engine）",
         "",
         "如果实现失败，进入修复循环状态机：",
@@ -1248,6 +1262,26 @@ def _stage_code_review(
 - 输出：性能分析报告、优化建议
 
 {_generate_review_enhancement()}
+
+### 分级 Review
+
+**关键模块即时 Review（Agent 执行阶段内）：**
+- DB schema 变更 → 安全审查 + 架构审查
+- 安全相关代码 → 安全审查 + Spec 合规
+- 跨模块接口 → 架构审查 + Spec 合规
+
+**总 Review（所有模块完成后）：**
+- Spec 合规审查 — 是否所有需求都已实现
+- 代码质量审查 — 规范、可读性、职责边界
+- 安全审查 — SQL 注入、XSS、鉴权
+- 性能审查 — N+1 查询、内存泄漏
+- 架构审查 — 职责边界、依赖方向
+
+**Review 后用户决策：**
+- ⛔ 展示 Review 结果后停止，等待用户决定
+- 选项 1：接受，进入交付验证
+- 选项 2：进入修复循环
+- 选项 3：部分接受（标记剩余问题为 P1/P2）
 
 ### 8.8 BLOCKER 处理
 - BLOCKER 修复后单独 commit（不与编码提交交叉）
@@ -1389,6 +1423,13 @@ def _stage_tech_plan(index, name, routing, structure, context_info, work_items):
 - 技术方案需人工确认（覆盖所有决策点）
 - 未确认禁止生成任何代码
 
+### Spec 驱动开发（SDD）
+
+**技术方案阶段必须输出：**
+1. `spec.md` — 设计规格（Source of Truth）
+2. 从 spec 导出 test plan（验收标准 → 测试用例）
+3. 后续阶段以此 spec 为基准
+
 ### 3.6 报告
 - 调用 `reqflow_report` 报告完成
 - 产出: 03_tech_plan.md"""
@@ -1464,29 +1505,41 @@ def _stage_cross_review(index, name, routing, structure, context_info, work_item
 - 产出: 06_code_review.md"""
 
 
-def _stage_summary(index, name, routing, structure, context_info, work_items):
-    """总结阶段（V3）。"""
+def _stage_summary(
+    index: int,
+    name: str,
+    routing: RoutingDecision,
+    structure: ProjectStructure | None,
+    context_info: dict[str, Any] | None,
+    work_items: list[WorkItem] | None,
+) -> str:
+    """总结阶段 — 在归档之前，输出完整总结。"""
     return f"""## {name}
 
-### 7.1 确认无未提交代码
-- 调用 `reqflow_git_check` 检查 Git 状态
+### 量化指标
+- 使用 ASCII 表格展示：总耗时、模块数、测试通过率、Review 发现数、BLOCKER 数、置信度平均
 
-### 7.2 全流程汇总
-- 调用 `reqflow_memory_load` 加载 memory.md
-- 还原每步方案和关键决策
+### 决策回顾
+- 使用 ASCII 表格展示所有关键决策、理由、替代方案
 
-### 7.3 生成清单
-- 配置清单（特性开关/KConf 等）
-- 验收标准汇总
-- 联调 Checklist
+### 经验教训
+- 做得好的（保持）
+- 可以改进的（下次优化）
+- 需要注意的（风险提示）
 
-### 7.4 归档
-- 归档永久文档可回溯
-- 确认是否还有遗留问题
+### 知识沉淀
+- 调用 `reqflow_memory_save` 保存关键决策到 knowledge/
+- 识别可复用的模式写入 knowledge/patterns/
 
-### 7.5 报告
-- 调用 `reqflow_report` 报告完成
-- 产出: 99_summary.md"""
+### 可视化
+- 阶段耗时分布（Mermaid 甘特图）
+- 置信度变化趋势（ASCII 趋势图）
+- 模块完成状态（进度条）
+
+### 输出
+- 对话中展示完整总结（含可视化图表）
+- 落文件到 `summary/summary.md` 和 `summary/metrics.md`
+- 调用 `reqflow_report` 报告完成"""
 
 
 def _generate_work_item_details(work_items: list[WorkItem]) -> str:
