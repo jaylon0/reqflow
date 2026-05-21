@@ -2327,37 +2327,6 @@ def main() -> None:
 
 
 
-TOOL_HANDLERS = {
-    "reqflow_run": _handle_run,
-    "reqflow_status": _handle_status,
-    "reqflow_list_runtimes": _handle_list_runtimes,
-    "reqflow_run_graph": _handle_run_graph,
-    "reqflow_session_save": _handle_session_save,
-    "reqflow_session_load": _handle_session_load,
-    "reqflow_dashboard": _handle_dashboard,
-    "reqflow_checkpoint": _handle_checkpoint,
-    "reqflow_parallel": _handle_parallel,
-    "reqflow_trace": _handle_trace,
-    "reqflow_guardrails": _handle_guardrails,
-    "reqflow_health": _handle_health,
-    # --- Harness 编排工具 ---
-    "reqflow_plan": _handle_plan,
-    "reqflow_report": _handle_report,
-    "reqflow_verify": _handle_verify,
-    "reqflow_accept": _handle_accept,
-    "reqflow_reject": _handle_reject,
-    # --- V3 新增工具 ---
-    "reqflow_tool_call": _handle_tool_call,
-    "reqflow_memory_save": _handle_memory_save,
-    "reqflow_memory_load": _handle_memory_load,
-    "reqflow_git_check": _handle_git_check,
-    # --- V3 BLOCKER 和多仓库工具 ---
-    "reqflow_blocker_add": _handle_blocker_add,
-    "reqflow_blocker_resolve": _handle_blocker_resolve,
-    "reqflow_blocker_check": _handle_blocker_check,
-    "reqflow_multi_repo_switch": _handle_multi_repo_switch,
-    "reqflow_acceptance_update": _handle_acceptance_update,
-}
 
 
 if __name__ == "__main__":
