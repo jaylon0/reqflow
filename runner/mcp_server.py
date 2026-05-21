@@ -548,6 +548,7 @@ TOOLS: list[dict] = [
             "properties": {
                 "requirement": {"type": "string", "description": "需求描述"},
                 "change_name": {"type": "string", "description": "变更名称（可选）"},
+                "auto_pilot": {"type": "boolean", "description": "自动模式：跳过所有中间确认，直接跑到归档", "default": false},
             },
             "required": ["requirement"],
         },
@@ -2108,6 +2109,7 @@ async def _handle_full_flow(arguments: dict) -> list:
     """强制全流程入口，跳过路由分析直接使用 L3 管线。"""
     requirement = arguments.get("requirement", "")
     change_name = arguments.get("change_name", "")
+    auto_pilot = arguments.get("auto_pilot", False)
 
     if not requirement:
         return [TextContent(type="text", text="[错误] requirement 参数不能为空")]
@@ -2142,6 +2144,7 @@ async def _handle_full_flow(arguments: dict) -> list:
         requirement=requirement,
         routing=routing,
         project_structure=structure,
+        auto_pilot=auto_pilot,
     )
     skill_path = save_execution_skill(skill, run_dir)
 
@@ -2164,6 +2167,7 @@ async def _handle_full_flow(arguments: dict) -> list:
         "change_name": change_name,
         "change_dir": change.path,
         "routing_level": "delivery_loop",
+        "auto_pilot": auto_pilot,
         "stages_count": len(skill.stages),
         "exec_skill_path": skill_path,
     }, ensure_ascii=False, indent=2))]
@@ -2327,37 +2331,6 @@ def main() -> None:
 
 
 
-TOOL_HANDLERS = {
-    "reqflow_run": _handle_run,
-    "reqflow_status": _handle_status,
-    "reqflow_list_runtimes": _handle_list_runtimes,
-    "reqflow_run_graph": _handle_run_graph,
-    "reqflow_session_save": _handle_session_save,
-    "reqflow_session_load": _handle_session_load,
-    "reqflow_dashboard": _handle_dashboard,
-    "reqflow_checkpoint": _handle_checkpoint,
-    "reqflow_parallel": _handle_parallel,
-    "reqflow_trace": _handle_trace,
-    "reqflow_guardrails": _handle_guardrails,
-    "reqflow_health": _handle_health,
-    # --- Harness 编排工具 ---
-    "reqflow_plan": _handle_plan,
-    "reqflow_report": _handle_report,
-    "reqflow_verify": _handle_verify,
-    "reqflow_accept": _handle_accept,
-    "reqflow_reject": _handle_reject,
-    # --- V3 新增工具 ---
-    "reqflow_tool_call": _handle_tool_call,
-    "reqflow_memory_save": _handle_memory_save,
-    "reqflow_memory_load": _handle_memory_load,
-    "reqflow_git_check": _handle_git_check,
-    # --- V3 BLOCKER 和多仓库工具 ---
-    "reqflow_blocker_add": _handle_blocker_add,
-    "reqflow_blocker_resolve": _handle_blocker_resolve,
-    "reqflow_blocker_check": _handle_blocker_check,
-    "reqflow_multi_repo_switch": _handle_multi_repo_switch,
-    "reqflow_acceptance_update": _handle_acceptance_update,
-}
 
 
 if __name__ == "__main__":
