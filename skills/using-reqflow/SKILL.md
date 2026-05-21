@@ -20,6 +20,16 @@ ReqFlow 是一个 Harness（编排器），它：
 3. 根据路由级别生成对应的 Execution Skill（执行剧本）
 4. Agent 按剧本执行，通过 MCP 工具回报状态
 
+## 全流程入口
+
+**强制 L3 全流程：**
+- Slash: `/reqflow:full-flow <需求>`
+- 自然语言: "跑完整流程" / "完整执行"
+- MCP: `reqflow_full_flow(requirement="...")`
+
+**指定级别：**
+- MCP: `reqflow_plan(requirement="...", level="L2")`
+
 ## 触发方式
 
 **自然语言：**
