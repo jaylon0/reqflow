@@ -548,7 +548,7 @@ TOOLS: list[dict] = [
             "properties": {
                 "requirement": {"type": "string", "description": "需求描述"},
                 "change_name": {"type": "string", "description": "变更名称（可选）"},
-                "auto_pilot": {"type": "boolean", "description": "自动模式：跳过所有中间确认，直接跑到归档", "default": false},
+                "auto_pilot": {"type": "boolean", "description": "自动模式：跳过所有中间确认，直接跑到归档", "default": False},
             },
             "required": ["requirement"],
         },

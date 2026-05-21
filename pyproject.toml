@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reqflow"
-version = "3.0.0"
+version = "3.1.0"
 description = "Model-agnostic workflow orchestration engine for AI coding agents"
 requires-python = ">=3.10"
 dependencies = [
@@ -18,3 +18,7 @@ all = ["urllib3>=2.0", "mcp>=1.0"]
 
 [project.scripts]
 reqflow = "reqflow.runner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "runner*", "reqflow*"]
