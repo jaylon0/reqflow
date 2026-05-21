@@ -2038,6 +2038,7 @@ async def _handle_multi_repo_switch(arguments: dict) -> list:
 
     from reqflow.core.multi_repo import MultiRepo
     mr = MultiRepo()
+    mr.detect_repos(project_dir)
 
     if not repo_name:
         repos = mr.list_repos()
