@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -54,3 +56,25 @@ class MultiRepo:
             {"name": r.name, "path": r.path, "branch": r.branch, "is_primary": r.is_primary}
             for r in self._repos.values()
         ]
+
+    def detect_repos(self, base_dir: str) -> list[RepoInfo]:
+        """Scan a directory for git repos and register them."""
+        detected: list[RepoInfo] = []
+        base = Path(base_dir)
+        if not base.is_dir():
+            return detected
+
+        # Check if base_dir itself is a git repo
+        if (base / ".git").exists():
+            repo = self.add_repo(base.name, str(base), is_primary=not self._repos)
+            detected.append(repo)
+            return detected
+
+        # Scan immediate subdirectories for .git
+        for child in sorted(base.iterdir()):
+            if child.is_dir() and (child / ".git").exists():
+                repo = self.add_repo(child.name, str(child), is_primary=not self._repos)
+                detected.append(repo)
+
+        logger.info("检测到 %d 个仓库 in %s", len(detected), base_dir)
+        return detected

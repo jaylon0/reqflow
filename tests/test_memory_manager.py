@@ -59,3 +59,31 @@ def test_markdown_generated():
         assert "decision" in content
         assert "auth" in content
         assert "Use HMAC" in content
+
+
+def test_json_persistence():
+    """save writes memory.json, new instance loads it."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mm = MemoryManager(tmpdir)
+        mm.save("decision", "db_engine", "PostgreSQL")
+
+        json_path = Path(tmpdir) / "memory.json"
+        assert json_path.exists()
+
+        # New instance should load from JSON
+        mm2 = MemoryManager(tmpdir)
+        loaded = mm2.load("decision", "db_engine")
+        assert loaded["value"] == "PostgreSQL"
+
+
+def test_json_persistence_all():
+    """save multiple entries, new instance loads all."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mm = MemoryManager(tmpdir)
+        mm.save("decision", "key1", "val1")
+        mm.save("constraint", "key2", "val2")
+
+        mm2 = MemoryManager(tmpdir)
+        all_mem = mm2.load()
+        assert all_mem["decision"]["key1"] == "val1"
+        assert all_mem["constraint"]["key2"] == "val2"

@@ -1718,6 +1718,27 @@ async def _handle_reject(arguments: dict) -> list:
 # --- V3 新增工具实现 ---
 
 
+def _load_tools_config(bridge) -> None:
+    """从 tools.yaml 加载工具配置并注册到 bridge。"""
+    import yaml
+    from pathlib import Path as _Path
+
+    for candidate in ("tools.yaml", "tools.yml", ".reqflow/tools.yaml"):
+        p = _Path(candidate)
+        if p.exists():
+            data = yaml.safe_load(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                for name, spec in data.items():
+                    if isinstance(spec, dict):
+                        # 用 spec 创建一个简单的 async handler
+                        def _make_handler(tool_spec):
+                            async def _handler(**kwargs):
+                                return {"status": "ok", "tool": tool_spec.get("name", "unknown"), "args": kwargs}
+                            return _handler
+                        bridge.register(name, _make_handler(spec))
+            break
+
+
 async def _handle_tool_call(arguments: dict) -> list:
     """处理 reqflow_tool_call 工具调用。"""
     tool_name = arguments.get("tool_name", "")
@@ -1730,9 +1751,14 @@ async def _handle_tool_call(arguments: dict) -> list:
     from reqflow.core.tool_bridge_mcp import ToolBridgeMCP
     bridge = ToolBridgeMCP()
 
-    import asyncio
+    # 从 tools.yaml 加载工具配置并注册
     try:
-        result = asyncio.get_event_loop().run_until_complete(bridge.call(tool_name, params))
+        _load_tools_config(bridge)
+    except Exception:
+        pass  # 配置文件不存在时忽略
+
+    try:
+        result = await bridge.call(tool_name, {**params, "method": method})
         return [TextContent(type="text", text=f"[{tool_name}] {method}: {result}")]
     except Exception as e:
         return [TextContent(type="text", text=f"[错误] {tool_name}.{method} 失败: {e}")]
@@ -1751,7 +1777,8 @@ async def _handle_memory_save(arguments: dict) -> list:
     from reqflow.core.memory_manager import MemoryManager
     run_path = _resolve_run_dir(run_id)
     mm = MemoryManager(str(run_path))
-    mm.save(category, content, stage or content)
+    key = stage or category
+    mm.save(category, key, content)
 
     return [TextContent(type="text", text=f"记忆已保存: [{category}] {content[:50]}...")]
 

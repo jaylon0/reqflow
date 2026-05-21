@@ -2,7 +2,7 @@
 import pytest
 import shutil
 from pathlib import Path
-from reqflow.core.runtime_config import RuntimeConfig, Capabilities, ContextFormat
+from core.runtime_config import RuntimeConfig, Capabilities, ContextFormat
 
 @pytest.fixture
 def manual_config():
