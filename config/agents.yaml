@@ -1,34 +1,73 @@
-# config/agents.yaml — Agent 配置
+# config/agents.yaml — Agent 配置 (V7)
 agents:
+  leader:
+    leader-agent:
+      model: any
+      role: 统筹协调
+      responsibility: 路由、派遣、聚合、裁决，全程参与决策
+      decision_principles:
+        - "Choose completeness — 选覆盖更多边缘情况的方案"
+        - "Pragmatic — 两个方案解决同一问题时，选更干净的"
+        - "DRY — 重复现有功能？拒绝"
+        - "Explicit over clever — 10行显而易见 > 200行抽象"
+        - "Bias toward action — 执行 > 审查循环 > 陈旧审议"
+        - "User sovereignty — AI 推荐，用户决策"
+      decision_types:
+        mechanical: "明确正确答案，静默自动决定"
+        taste: "自动决定但呈现给用户"
+        user_challenge: "两个以上agent意见一致但挑战用户方向时，永不自动决定"
+
   auxiliary:
     research-agent:
-      model: sonnet
-      trigger: keyword
-      keywords: [调研, 分析, 竞品, 技术选型, 探索]
+      model: any
+      role: 调研分析
+      responsibility: 技术调研、竞品分析、证据支撑
+      keywords: [调研, 分析, 竞品, 技术选型, 探索, 证据, 对标]
     architecture-agent:
-      model: opus
-      trigger: keyword
+      model: any
+      role: 架构设计
+      responsibility: 架构设计、模块划分、重构规划
       keywords: [架构, 设计模式, 重构, 模块划分]
     security-agent:
-      model: opus
-      trigger: keyword
+      model: any
+      role: 安全审查
+      responsibility: 安全审查、鉴权方案、漏洞检查
       keywords: [安全, 鉴权, 注入, XSS, CSRF, 加密]
     performance-agent:
-      model: sonnet
-      trigger: keyword
+      model: any
+      role: 性能优化
+      responsibility: 性能分析、缓存策略、并发处理
       keywords: [性能, 缓存, 查询优化, 并发, 内存]
     test-gen-agent:
-      model: sonnet
-      trigger: keyword
+      model: any
+      role: 测试生成
+      responsibility: 测试用例设计、覆盖率分析
       keywords: [测试, 用例, 覆盖率, 边界]
     debug-agent:
-      model: sonnet
-      trigger: keyword
+      model: any
+      role: 调试修复
+      responsibility: 错误诊断、问题定位与修复
       keywords: [调试, 错误, 异常, 堆栈, 排查]
     doc-agent:
-      model: sonnet
-      trigger: keyword
+      model: any
+      role: 文档生成
+      responsibility: 文档编写、API 文档维护
       keywords: [文档, 注释, README, API 文档]
+    data-agent:
+      model: any
+      role: 数据建模
+      responsibility: 数据库 schema、ER 图、数据流设计
+      keywords: [数据库, schema, ER, 数据模型, 表结构, SQL]
+    api-agent:
+      model: any
+      role: API 设计
+      responsibility: 接口设计、契约定义、API 规范
+      keywords: [API, 接口, RESTful, GraphQL, 契约]
+    compliance-agent:
+      model: any
+      role: 合规审查
+      responsibility: 法规合规、数据隐私、许可证检查
+      keywords: [合规, 隐私, GDPR, 许可证, 法规]
 
   brainstorming:
     modes:
@@ -44,41 +83,73 @@ agents:
       critique-refine:
         max_rounds: 5
         consensus: majority
+      structured-debate:
+        max_rounds: 3
+        consensus: weighted_majority
 
+  # 每阶段 leader 角色和 specialist agents（强制参与）
   stage_mapping:
     启动:
+      leader_role: null
       brainstorming: null
-      agents: []
+      agents: [doc-agent]
     PRD理解:
+      leader_role: 需求审查官
       brainstorming: round-robin
-      agents: [research-agent, architecture-agent]
+      agents: [research-agent, architecture-agent, compliance-agent]
     Spec治理:
+      leader_role: 规格审计员
       brainstorming: critique-refine
-      agents: [security-agent, architecture-agent]
+      agents: [research-agent, security-agent, architecture-agent, data-agent, compliance-agent]
     工作流智能:
+      leader_role: 流程架构师
       brainstorming: round-robin
-      agents: [architecture-agent, research-agent]
+      agents: [research-agent, architecture-agent, api-agent]
     上下文发现:
+      leader_role: 上下文裁判
       brainstorming: panel-of-experts
       agents: [research-agent, architecture-agent, security-agent]
     技术方案:
+      leader_role: 技术决策者
       brainstorming: panel-of-experts
-      agents: [research-agent, architecture-agent, security-agent, performance-agent]
+      agents: [research-agent, architecture-agent, security-agent, performance-agent, data-agent, api-agent]
     实施计划:
+      leader_role: 任务分解官
       brainstorming: round-robin
-      agents: [architecture-agent, test-gen-agent]
+      agents: [research-agent, architecture-agent, test-gen-agent, debug-agent]
     Agent执行:
-      brainstorming: null
-      agents: [debug-agent, test-gen-agent]
+      leader_role: 质量门禁官
+      brainstorming: structured-debate
+      agents: [research-agent, debug-agent, test-gen-agent, security-agent]
     代码审查:
+      leader_role: 审查综合者
       brainstorming: critique-refine
-      agents: [security-agent, performance-agent, architecture-agent]
+      agents: [research-agent, security-agent, performance-agent, architecture-agent, test-gen-agent]
     交付验证:
-      brainstorming: null
-      agents: [test-gen-agent, security-agent]
+      leader_role: 最终裁决者
+      brainstorming: panel-of-experts
+      agents: [research-agent, test-gen-agent, security-agent, compliance-agent]
     总结:
-      brainstorming: null
-      agents: [doc-agent]
+      leader_role: 复盘主持人
+      brainstorming: round-robin
+      agents: [research-agent, doc-agent]
     归档:
+      leader_role: null
       brainstorming: null
       agents: [doc-agent]
+
+  # 共识配置
+  consensus_config:
+    method: weighted_majority
+    confidence_threshold: 0.7
+    escalation: ask_user
+
+  # 质量门配置
+  quality_gates:
+    default_mode: hybrid
+    auto_retry_limit: 3
+    stages:
+      PRD理解: { mode: human }
+      技术方案: { mode: human }
+      交付验证: { mode: human }
+      default: { mode: hybrid }
