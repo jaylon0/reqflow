@@ -1,4 +1,4 @@
-from reqflow.core.visualization import Visualizer
+from core.visualization import Visualizer
 
 
 def test_progress_bar():
