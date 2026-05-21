@@ -257,28 +257,29 @@ def _generate_mcp_guide() -> str:
 - `reqflow_health` — 检查 ReqFlow 系统健康状态"""
 
 
-# 辅助 Agent 映射表 — 每个阶段可选的辅助 Agent
+# 辅助 Agent 映射表 — 每阶段至少 2-3 个 agent 提升置信度
 _AUXILIARY_AGENTS = {
-    "PRD理解": ["research-agent"],
-    "Spec治理": [],
-    "工作流智能": [],
-    "上下文发现": [],
-    "技术方案": ["research-agent", "architecture-agent"],
-    "实施计划": [],
-    "Agent执行": ["debug-agent"],
-    "代码审查": ["security-agent", "performance-agent"],
-    "交付验证": ["test-gen-agent"],
+    "启动": [],
+    "PRD理解": ["research-agent", "architecture-agent"],
+    "Spec治理": ["security-agent", "architecture-agent"],
+    "工作流智能": ["architecture-agent", "research-agent"],
+    "上下文发现": ["research-agent", "architecture-agent", "security-agent"],
+    "技术方案": ["research-agent", "architecture-agent", "security-agent", "performance-agent"],
+    "实施计划": ["architecture-agent", "test-gen-agent"],
+    "Agent执行": ["debug-agent", "test-gen-agent"],
+    "代码审查": ["security-agent", "performance-agent", "architecture-agent"],
+    "交付验证": ["test-gen-agent", "security-agent"],
+    "总结": ["doc-agent"],
     "归档": ["doc-agent"],
     # 旧名称兼容
-    "上下文理解": [],
-    "代码梳理": [],
-    "生成代码": ["debug-agent"],
+    "上下文理解": ["research-agent", "architecture-agent"],
+    "代码梳理": ["research-agent", "architecture-agent"],
+    "生成代码": ["debug-agent", "test-gen-agent"],
     "跨模块终检": ["security-agent", "performance-agent"],
-    "总结": ["doc-agent"],
     # L0/L1 特有
-    "分析报告": [],
-    "轻量实现": [],
-    "局部验证": [],
+    "分析报告": ["research-agent", "architecture-agent"],
+    "轻量实现": ["debug-agent", "test-gen-agent"],
+    "局部验证": ["test-gen-agent", "security-agent"],
 }
 
 
