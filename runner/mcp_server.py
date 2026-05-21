@@ -548,6 +548,7 @@ TOOLS: list[dict] = [
             "properties": {
                 "requirement": {"type": "string", "description": "需求描述"},
                 "change_name": {"type": "string", "description": "变更名称（可选）"},
+                "auto_pilot": {"type": "boolean", "description": "自动模式：跳过所有中间确认，直接跑到归档", "default": false},
             },
             "required": ["requirement"],
         },
@@ -2108,6 +2109,7 @@ async def _handle_full_flow(arguments: dict) -> list:
     """强制全流程入口，跳过路由分析直接使用 L3 管线。"""
     requirement = arguments.get("requirement", "")
     change_name = arguments.get("change_name", "")
+    auto_pilot = arguments.get("auto_pilot", False)
 
     if not requirement:
         return [TextContent(type="text", text="[错误] requirement 参数不能为空")]
@@ -2142,6 +2144,7 @@ async def _handle_full_flow(arguments: dict) -> list:
         requirement=requirement,
         routing=routing,
         project_structure=structure,
+        auto_pilot=auto_pilot,
     )
     skill_path = save_execution_skill(skill, run_dir)
 
@@ -2164,6 +2167,7 @@ async def _handle_full_flow(arguments: dict) -> list:
         "change_name": change_name,
         "change_dir": change.path,
         "routing_level": "delivery_loop",
+        "auto_pilot": auto_pilot,
         "stages_count": len(skill.stages),
         "exec_skill_path": skill_path,
     }, ensure_ascii=False, indent=2))]

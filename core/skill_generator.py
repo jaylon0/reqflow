@@ -98,6 +98,7 @@ def generate_execution_skill(
     project_structure: ProjectStructure | None = None,
     context_info: dict[str, Any] | None = None,
     work_items: list[WorkItem] | None = None,
+    auto_pilot: bool = False,
 ) -> ExecutionSkill:
     """生成 Execution Skill。
 
@@ -120,7 +121,7 @@ def generate_execution_skill(
     sections.append(_generate_mcp_guide())
 
     for i, stage in enumerate(stages, 1):
-        sections.append(_generate_stage(i, stage, routing, project_structure, context_info, work_items))
+        sections.append(_generate_stage(i, stage, routing, project_structure, context_info, work_items, auto_pilot=auto_pilot))
 
     if work_items and routing.level in (RoutingLevel.L2, RoutingLevel.L3):
         sections.append(_generate_work_item_details(work_items))
@@ -327,7 +328,7 @@ _AUXILIARY_AGENTS = {
 }
 
 
-def _generate_standard_actions(stage_name: str, routing: RoutingDecision) -> str:
+def _generate_standard_actions(stage_name: str, routing: RoutingDecision, auto_pilot: bool = False) -> str:
     """生成阶段标准动作 — 每个阶段都有的自检、问题发现、确认点。"""
     is_deep = routing.level in (RoutingLevel.L2, RoutingLevel.L3)
     agents = _AUXILIARY_AGENTS.get(stage_name, [])
@@ -362,10 +363,18 @@ def _generate_standard_actions(stage_name: str, routing: RoutingDecision) -> str
         agent_names = ", ".join(f"`{a}`" for a in agents)
         lines.extend([
             "",
-            "#### 3. 辅助 Agent（按需触发）",
-            f"- 本阶段可用的辅助 Agent: {agent_names}",
-            "- 触发条件见各 Agent 说明",
-            "- 调用后在对话中展示 findings 摘要",
+            "#### 3. 辅助 Agent 协作（⛔ 必须执行）",
+            f"- 本阶段必须协作的辅助 Agent: {agent_names}",
+            "- **每个辅助 Agent 必须被调用**，从其专业角度提供分析",
+            "- 调用方式：使用 Agent 工具派遣子 agent，明确指定分析任务",
+            "- **在对话中逐个展示每个 agent 的分析结果**，格式：",
+            "  ```",
+            "  📋 [agent-name] 分析结果:",
+            "  - 发现: ...",
+            "  - 建议: ...",
+            "  - 风险: ...",
+            "  ```",
+            "- 如果某个 agent 不可用，在对话中说明并继续",
         ])
 
     lines.extend([
@@ -386,21 +395,27 @@ def _generate_standard_actions(stage_name: str, routing: RoutingDecision) -> str
         "- 使用进度条展示完成度/置信度",
         "- 使用 Mermaid 图表展示流程/架构（如果适用）",
         "",
-        "#### 5. 阶段确认（⛔ 硬停止点）",
-        "- 展示本阶段产出摘要（在对话中，不是文件里）",
-        "- 列出自修复问题（已修复）和需确认问题（等待确认）",
-        "- 明确告知用户：「本阶段完成，请确认后继续下一步」",
-        "- ⛔ **停止执行，等待用户回复**",
-        "- 用户确认 → 进入下一阶段",
-        "- 用户拒绝 → 询问具体问题 → 修复 → 重新展示 → 再次等待确认",
-        "- **修复循环无次数上限 — 直到用户确认**",
+        "#### 5. 阶段确认" + ("（⛔ 硬停止点）" if not auto_pilot else "（自动模式）"),
         "",
-        "#### 6. 置信度评估（⛔ 必须执行）",
+        "#### 6. 置信度评估 + 可视化报告（⛔ 必须执行）",
         "",
-        "- 评估本阶段产出的置信度（high/medium/low）",
-        "- 评估维度：完整性（产出物是否齐全）、一致性（产出物是否矛盾）、准确性（是否符合需求）",
+        "**必须在对话中输出以下格式的报告：**",
+        "",
+        "```",
+        "┌─────────────────────────────────────┐",
+        "│ 📊 阶段置信度报告                     │",
+        "├─────────────────────────────────────┤",
+        "│ 完整性: [████████░░] 80%             │",
+        "│ 一致性: [██████████] 100%            │",
+        "│ 准确性: [████████░░] 80%             │",
+        "│ 综合分: 0.86                         │",
+        "│ 级别:   HIGH                         │",
+        "│ 建议:   proceed → 自动进入下一阶段     │",
+        "└─────────────────────────────────────┘",
+        "```",
+        "",
         "- 调用 `reqflow_confidence(completeness=..., consistency=..., accuracy=...)` 获取路由建议",
-        "- **high** → 自动进入下一阶段，在报告中展示置信度",
+        "- **high** → 自动进入下一阶段",
         "- **medium** → 暂停，列出不确定点，等待用户判断",
         "- **low** → 自动重试（最多 2 次），仍 low 则升级到用户",
         "- low 必须说明具体原因和重试计划",
@@ -410,11 +425,7 @@ def _generate_standard_actions(stage_name: str, routing: RoutingDecision) -> str
 
 
 def _generate_brainstorming_section(stage_name: str, routing: RoutingDecision) -> str:
-    """生成头脑风暴指令（每个阶段）。"""
-    is_deep = routing.level in (RoutingLevel.L2, RoutingLevel.L3)
-    if not is_deep:
-        return ""
-
+    """生成头脑风暴指令（每个阶段都必须执行）。"""
     high_value_stages = {"PRD理解", "上下文发现", "技术方案", "代码审查"}
     medium_value_stages = {"Spec治理", "工作流智能", "实施计划", "交付验证"}
 
@@ -427,27 +438,35 @@ def _generate_brainstorming_section(stage_name: str, routing: RoutingDecision) -
         max_rounds = 1
         value_level = "中价值"
     else:
-        return ""
+        # 低价值阶段也执行，但用快速模式
+        mode = "round-robin"
+        max_rounds = 1
+        value_level = "标准"
 
     agents = _AUXILIARY_AGENTS.get(stage_name, [])
     if not agents:
-        return ""
+        agents = ["architecture-agent"]
 
     agent_list = ", ".join(f"`{a}`" for a in agents)
 
     return f"""
-### 多 Agent 头脑风暴（⛔ 建议执行）
+### 多 Agent 协作（⛔ 必须执行）
 
 **模式:** {mode} | **轮次:** {max_rounds} | **价值级别:** {value_level}
 **参与 Agent:** {agent_list}
 
-**执行流程：**
-1. 调用 `reqflow_brainstorm(mode="{mode}", agents=[...], topic="{stage_name}", context="...")`
-2. 每个 agent 从专业角度发表观点
+**执行流程（必须在对话中完整输出）：**
+1. 调用 `reqflow_brainstorm(mode="{mode}", agents=[{repr(agents)}], topic="{stage_name}", context="本阶段上下文")`
+2. **每个 agent 的发言必须在对话中逐条展示**，格式：
+   ```
+   🔵 [agent-name]: <具体观点和分析>
+   ```
 3. 记录讨论过程到 `brainstorming/{stage_name}.md`
-4. 输出共识结果，作为本阶段决策参考
+4. **输出共识结果**，作为本阶段决策参考
+5. 如果有分歧，展示正反观点和最终裁决
 
-**如果 agent 不可用：** 降级为单 agent 模式，继续执行
+**白盒要求：** 用户必须能看到每个 agent 的完整推理过程，不能只展示结论。
+**如果 agent 不可用：** 降级为单 agent 模式，在对话中说明降级原因。
 """
 
 
@@ -622,6 +641,7 @@ def _generate_stage(
     project_structure: ProjectStructure | None,
     context_info: dict[str, Any] | None,
     work_items: list[WorkItem] | None,
+    auto_pilot: bool = False,
 ) -> str:
     """生成单个阶段的内容。"""
     stage_generators = {
@@ -656,7 +676,7 @@ def _generate_stage(
     skip_stages = {"启动", "归档", "总结"}
     if stage_name not in skip_stages:
         stage_content += _generate_brainstorming_section(stage_name, routing)
-        stage_content += _generate_standard_actions(stage_name, routing)
+        stage_content += _generate_standard_actions(stage_name, routing, auto_pilot=auto_pilot)
 
     return stage_content
 

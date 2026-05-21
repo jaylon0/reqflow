@@ -20,8 +20,8 @@ from .blocker_manager import BlockerManager, BlockerLevel, Blocker, BlockerGateR
 from .context_guard import ContextGuard
 from .module_loop import ModuleLoop, ModuleStep, ModuleResult
 from .memory_manager import MemoryManager
-from .git_workflow import GitWorkflow, BranchStatus, CommitResult
-from .tool_bridge_mcp import ToolBridgeMCP, ExternalTool, ToolCallResult
+from .git_workflow import GitWorkflow, GitStatus
+from .tool_bridge_mcp import ToolBridgeMCP
 from .multi_repo import MultiRepo, RepoInfo
 
 __all__ = [
@@ -39,7 +39,7 @@ __all__ = [
     "ContextGuard",
     "ModuleLoop", "ModuleStep", "ModuleResult",
     "MemoryManager",
-    "GitWorkflow", "BranchStatus", "CommitResult",
-    "ToolBridgeMCP", "ExternalTool", "ToolCallResult",
+    "GitWorkflow", "GitStatus",
+    "ToolBridgeMCP",
     "MultiRepo", "RepoInfo",
 ]
