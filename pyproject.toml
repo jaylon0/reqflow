@@ -18,3 +18,7 @@ all = ["urllib3>=2.0", "mcp>=1.0"]
 
 [project.scripts]
 reqflow = "reqflow.runner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "runner*", "reqflow*"]
