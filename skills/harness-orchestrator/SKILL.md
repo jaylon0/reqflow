@@ -279,6 +279,14 @@ Agent 执行阶段使用多智能体协调模式：
 - opus: 数据库 schema 变更、多服务协调、安全敏感代码、>5 验收标准
 - sonnet: 标准 API 变更、简单业务逻辑、测试补充、<=5 验收标准
 
+### ⛔ Agent 派遣规则
+
+每个阶段的 agent 角色矩阵由 Execution Skill 定义。派遣规则：
+- 同一阶段的 agents 必须并行派遣（同一条消息中多个 Agent tool call）
+- required agent 不得省略
+- optional agent 超时可降级
+- 主 agent 不得代替子 agent 回答
+
 ## Loop Engine（修复循环）
 
 失败时进入修复循环状态机：
@@ -403,6 +411,19 @@ reqflow_verify(
     evidence={...},
 )
 ```
+
+## 产物验证
+
+每个修改文件的阶段结束后，必须验证产物：
+- 调用 ArtifactVerifier 检查文件是否存在
+- 输出产物验证表：
+  ```
+  #### 产物验证
+  | 文件 | 操作 | 存在 | 状态 |
+  |------|------|------|------|
+  | PlaceholderController.java | 修改 | ✅ | 通过 |
+  产物完整性: 1/1 通过
+  ```
 
 ## MCP 工具
 
