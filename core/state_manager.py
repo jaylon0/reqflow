@@ -171,10 +171,19 @@ class Checkpoint:
     log_snapshot: str = ""
 
 
+_RUNSTATE_FIELDS: set[str] = set()
+
 @dataclass
 class RunState:
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    requirement: str = ""
+    routing_level: str = ""
+    change_name: str = ""
+    stages: list[str] = field(default_factory=list)
     current_stage: str = ""
+    current_stage_index: int = 0  # index in stages list
+    steps_executed: int = 0  # total MCP tool calls executed
+    status: str = "active"  # active|completed|failed
     completed_modules: list[str] = field(default_factory=list)
     pending_confirmations: list[str] = field(default_factory=list)
     spec_status: str = "draft"  # draft|approved|archived
@@ -188,6 +197,11 @@ class RunState:
     stage_experiences: list[dict[str, Any]] = field(default_factory=list)  # V7 经验缓存
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    extra: dict[str, Any] = field(default_factory=dict)  # 未知字段存这里
+
+
+# Build field set after class definition
+_RUNSTATE_FIELDS = {f.name for f in RunState.__dataclass_fields__.values()}
 
 
 class StateManager:
@@ -207,12 +221,25 @@ class StateManager:
             self._state = self.load_state()
         return self._state
 
-    def save_state(self, state: RunState | None = None):
+    def save_state(self, state: RunState | dict | None = None):
         """Save current state to state.json."""
-        s = state or self.state
+        if isinstance(state, dict):
+            # Merge dict into current state
+            s = self.state
+            for k, v in state.items():
+                if k in _RUNSTATE_FIELDS and k != "extra":
+                    setattr(s, k, v)
+                else:
+                    s.extra[k] = v
+        else:
+            s = state or self.state
         s.updated_at = datetime.now().isoformat()
         state_file = self.run_dir / "state.json"
-        state_file.write_text(json.dumps(asdict(s), indent=2, ensure_ascii=False))
+        data = asdict(s)
+        # Flatten extra into top-level for backward compatibility
+        extra = data.pop("extra", {})
+        data.update(extra)
+        state_file.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
     def load_state(self) -> RunState:
         """Load state from state.json, or create a new one."""
@@ -232,16 +259,33 @@ class StateManager:
         memory = Memory(**memory_data) if memory_data else Memory()
         checkpoints = [Checkpoint(**c) for c in checkpoints_data]
 
+        known = {}
+        extra = {}
+        for k, v in data.items():
+            if k in _RUNSTATE_FIELDS:
+                known[k] = v
+            else:
+                extra[k] = v
+        known["extra"] = extra
+
         return RunState(
             session=session,
             memory=memory,
             checkpoints=checkpoints,
-            **{k: v for k, v in data.items() if k not in ("session", "memory", "checkpoints")},
+            **known,
         )
 
     def update_stage(self, stage: str):
         """Update the current stage and save."""
         self.state.current_stage = stage
+        self.save_state()
+
+    def update_stage_progress(self, stage: str, stage_index: int | None = None):
+        """Update current stage and index, increment steps."""
+        self.state.current_stage = stage
+        if stage_index is not None:
+            self.state.current_stage_index = stage_index
+        self.state.steps_executed += 1
         self.save_state()
 
     def complete_module(self, module: str):
