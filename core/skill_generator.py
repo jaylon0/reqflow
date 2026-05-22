@@ -1262,7 +1262,7 @@ def _stage_archive(
 
 ### 10.8 报告
 - 调用 `reqflow_report` 报告完成
-- 产出: 10_archive.md"""
+- 产出: 11_archive.md"""
 
 
 def _stage_analysis(
@@ -1841,7 +1841,7 @@ def _stage_tech_plan(index, name, routing, structure, context_info, work_items):
 
 ### 3.6 报告
 - 调用 `reqflow_report` 报告完成
-- 产出: 03_tech_plan.md"""
+- 产出: 05_tech_plan.md"""
 
 
 def _stage_coding(index, name, routing, structure, context_info, work_items):
