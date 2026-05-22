@@ -650,7 +650,7 @@ compliance-report:
     },
     {
         "name": "reqflow_stage_report",
-        "description": "生成结构化阶段报告。每个阶段完成后必须调用此工具生成详细报告。",
+        "description": "⛔ 内部状态工具。返回值仅供 agent 内部使用，不得直接展示给用户。Agent 必须根据输入参数在对话中生成完整阶段报告（含置信度、Agent 共识、MCP 追踪等）。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -688,7 +688,7 @@ compliance-report:
     },
     {
         "name": "reqflow_dispatch_agent",
-        "description": "记录并验证 Agent 派遣。根据阶段自动推荐应派遣的 Agent。",
+        "description": "⛔ 内部状态工具。返回值仅供 agent 内部使用，不得直接展示给用户。Agent 必须根据返回的角色定义和 Prompt 模板在对话中生成 Agent 派遣指引。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -717,7 +717,7 @@ compliance-report:
     },
     {
         "name": "reqflow_acceptance_options",
-        "description": "生成验收选项。在交付验证阶段必须调用，提供明确的验收选项。",
+        "description": "⛔ 内部状态工具。返回值仅供 agent 内部使用，不得直接展示给用户。Agent 必须根据输入参数在对话中生成完整验收决策面板（含交付物清单、验证结果、4 选项）。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2797,36 +2797,20 @@ async def _handle_stage_report(arguments: dict) -> list:
             })
             state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # 生成格式化报告
-    report = f"""
-## 📋 阶段报告：{stage_name}
-
-### ✅ 已完成项
-{chr(10).join(f"- {item}" for item in completed_items) if completed_items else "- 无"}
-
-### ⚠️ 风险项
-{chr(10).join(f"- {item}" for item in risk_items) if risk_items else "- 无"}
-
-### 📊 置信度：{confidence_score}/100
-
-### 📝 下一步
-{chr(10).join(f"- {step}" for step in next_steps) if next_steps else "- 无"}
-
-### 📁 产物清单
-{chr(10).join(f"- `{artifact}`" for artifact in artifacts) if artifacts else "- 无"}
-"""
-
     # 获取应派遣的 Agent
     required_agents = _STAGE_AGENT_RULES.get(stage_name, [])
-    if required_agents:
-        report += f"""
-### 🤖 必须派遣的 Agent
-{chr(10).join(f"- `{agent}`" for agent in required_agents)}
 
-⛔ **必须** 在进入下一阶段前派遣上述 Agent 执行分析。
-"""
+    # 返回简化状态（详细报告由 agent 在对话中生成）
+    result = {
+        "status": "recorded",
+        "stage": stage_name,
+        "confidence": confidence_score,
+        "required_agents": required_agents,
+        "output_required": True,
+        "message": f"✅ 阶段报告已记录：{stage_name}，置信度 {confidence_score}/100"
+    }
 
-    return [TextContent(type="text", text=report.strip())]
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
 async def _handle_dispatch_agent(arguments: dict) -> list:
@@ -2933,6 +2917,7 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
 """
 
     # 检查是否还有其他必须派遣的 Agent
+    missing_agents = []
     if required_agents:
         dispatched_file = run_dir / "state.json" if run_dir else None
         dispatched_agents = []
@@ -2941,15 +2926,19 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
             dispatched_agents = [d["agent_role"] for d in state.get("agent_dispatches", []) if d["stage"] == stage_name]
 
         missing_agents = [a for a in required_agents if a not in dispatched_agents]
-        if missing_agents:
-            guidance += f"""
-### ⚠️ 还有未派遣的必须 Agent
-{chr(10).join(f"- `{agent}`" for agent in missing_agents)}
 
-⛔ **必须** 在进入下一阶段前派遣所有必须的 Agent。
-"""
+    # 返回简化状态（详细指引由 agent 在对话中生成）
+    result = {
+        "status": "dispatched",
+        "stage": stage_name,
+        "agent": agent_role,
+        "is_required": is_required,
+        "missing_agents": missing_agents,
+        "output_required": True,
+        "message": f"✅ Agent 派遣已记录：{agent_role}" + (f"，还有 {len(missing_agents)} 个必须 Agent 未派遣" if missing_agents else "")
+    }
 
-    return [TextContent(type="text", text=guidance.strip())]
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
 async def _handle_acceptance_options(arguments: dict) -> list:
@@ -2976,41 +2965,18 @@ async def _handle_acceptance_options(arguments: dict) -> list:
     fail_count = sum(1 for r in verification_results if r.get("status") == "fail")
     warning_count = sum(1 for r in verification_results if r.get("status") == "warning")
 
-    # 生成验收报告
-    report = f"""
-## 🎯 验收选项
+    # 返回简化状态（详细验收面板由 agent 在对话中生成）
+    result = {
+        "status": "ready",
+        "deliverables_count": len(deliverables),
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "warning_count": warning_count,
+        "output_required": True,
+        "message": f"✅ 验收选项已准备：{len(deliverables)} 个交付物，{pass_count} 通过，{fail_count} 失败，{warning_count} 警告"
+    }
 
-### 📦 交付物清单
-{chr(10).join(f"- `{item}`" for item in deliverables) if deliverables else "- 无"}
-
-### ✅ 验证结果
-{chr(10).join(f"- **{r.get('item', '')}**: {'✅ 通过' if r.get('status') == 'pass' else '❌ 失败' if r.get('status') == 'fail' else '⚠️ 警告'} - {r.get('detail', '')}" for r in verification_results) if verification_results else "- 无验证结果"}
-
-### 📊 统计
-- ✅ 通过: {pass_count}
-- ❌ 失败: {fail_count}
-- ⚠️ 警告: {warning_count}
-
-### 🎯 请选择
-
-**1. ✅ 通过验收**
-- 确认交付物符合要求
-- 调用 `reqflow_accept` 完成流程
-
-**2. ❌ 拒绝验收**
-- 说明拒绝原因
-- 调用 `reqflow_reject` 返回修改
-
-**3. ⚠️ 有条件通过**
-- 列出需要修改的项
-- 调用 `reqflow_accept` 并附带修改要求
-
----
-
-⛔ **必须** 选择上述选项之一，不能跳过验收。
-"""
-
-    return [TextContent(type="text", text=report.strip())]
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
 # ---------------------------------------------------------------------------
