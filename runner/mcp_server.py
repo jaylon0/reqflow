@@ -366,7 +366,33 @@ TOOLS: list[dict] = [
     },
     {
         "name": "reqflow_verify",
-        "description": "请求门禁验证。质量门禁检查。",
+        "description": """验证质量门禁。
+
+gate 可选值及 evidence schema:
+
+design-gate:
+  meta_spec: str (truthy) - Meta Spec 路径
+  feature_spec: str (truthy) - Feature Spec 路径
+  tech_plan_stages: int >= 2 - 技术方案阶段数
+  completeness_checked: bool - 是否完成完备性检查
+
+tdd-gate:
+  failing_tests_count: int > 0 - 失败测试数量（必须 > 0）
+  test_plan: bool (truthy) - 测试计划是否存在
+
+completion-gate:
+  build_success: bool - 构建是否成功
+  tests_passing: bool - 测试是否全部通过
+  spec_compliant: bool - 是否通过 Spec 合规审查
+  completed_items: int - 已完成工作项数
+  total_items: int - 总工作项数
+
+compliance-report:
+  verification_evidence: str (truthy) - 验证证据
+  review_evidence: str (truthy) - 审查证据
+  test_evidence: str (truthy) - 测试证据
+
+若字段名或类型不匹配，返回精确错误信息。""",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -548,7 +574,7 @@ TOOLS: list[dict] = [
             "properties": {
                 "requirement": {"type": "string", "description": "需求描述"},
                 "change_name": {"type": "string", "description": "变更名称（可选）"},
-                "auto_pilot": {"type": "boolean", "description": "自动模式：跳过所有中间确认，直接跑到归档", "default": false},
+                "auto_pilot": {"type": "boolean", "description": "自动模式：跳过所有中间阶段确认，仅在最终验收时停止等待用户。所有阶段仍完整执行，只是不等待用户逐阶段确认。", "default": False},
             },
             "required": ["requirement"],
         },
@@ -1564,6 +1590,14 @@ async def _handle_report(arguments: dict) -> list:
 
     state["current_stage"] = stage
     state["updated_at"] = _dt.now().isoformat()
+
+    # Update stage index and steps count
+    stages = state.get("stages", [])
+    if stage in stages:
+        idx = stages.index(stage)
+        state["current_stage_index"] = idx
+    state["steps_executed"] = state.get("steps_executed", 0) + 1
+
     if status in ("done", "conditional"):
         state.setdefault("completed_modules", []).append(stage)
     report_entry = {
@@ -1602,6 +1636,59 @@ async def _handle_report(arguments: dict) -> list:
     return [TextContent(type="text", text="\n".join(lines))]
 
 
+_GATE_EVIDENCE_SCHEMAS = {
+    "design-gate": {
+        "meta_spec": {"type": "str", "description": "Meta Spec 路径", "check": lambda v: bool(v)},
+        "feature_spec": {"type": "str", "description": "Feature Spec 路径", "check": lambda v: bool(v)},
+        "tech_plan_stages": {"type": "int >= 2", "description": "技术方案阶段数", "check": lambda v: isinstance(v, int) and v >= 2},
+        "completeness_checked": {"type": "bool", "description": "是否完成完备性检查", "check": lambda v: isinstance(v, bool)},
+    },
+    "tdd-gate": {
+        "failing_tests_count": {"type": "int > 0", "description": "失败测试数量", "check": lambda v: isinstance(v, (int, float)) and v > 0},
+        "test_plan": {"type": "bool (truthy)", "description": "测试计划是否存在", "check": lambda v: bool(v)},
+    },
+    "completion-gate": {
+        "build_success": {"type": "bool", "description": "构建是否成功", "check": lambda v: isinstance(v, bool)},
+        "tests_passing": {"type": "bool", "description": "测试是否全部通过", "check": lambda v: isinstance(v, bool)},
+        "spec_compliant": {"type": "bool", "description": "是否通过 Spec 合规审查", "check": lambda v: isinstance(v, bool)},
+        "completed_items": {"type": "int", "description": "已完成工作项数", "check": lambda v: isinstance(v, int)},
+        "total_items": {"type": "int", "description": "总工作项数", "check": lambda v: isinstance(v, int)},
+    },
+    "compliance-report": {
+        "verification_evidence": {"type": "str (truthy)", "description": "验证证据", "check": lambda v: bool(v)},
+        "review_evidence": {"type": "str (truthy)", "description": "审查证据", "check": lambda v: bool(v)},
+        "test_evidence": {"type": "str (truthy)", "description": "测试证据", "check": lambda v: bool(v)},
+    },
+}
+
+
+def _validate_evidence(gate: str, evidence: dict) -> str | None:
+    """Validate evidence against gate schema. Returns error message or None."""
+    schema = _GATE_EVIDENCE_SCHEMAS.get(gate)
+    if not schema:
+        return None
+
+    missing = []
+    wrong_type = []
+    for field, spec in schema.items():
+        if field not in evidence:
+            missing.append(f"  - {field}: {spec['description']} (要求 {spec['type']})")
+        elif not spec['check'](evidence[field]):
+            wrong_type.append(f"  - {field}: 值 {evidence[field]} 不满足 {spec['type']}")
+
+    if missing or wrong_type:
+        parts = ["门禁未通过:"]
+        if missing:
+            parts.append("缺失字段:")
+            parts.extend(missing)
+        if wrong_type:
+            parts.append("类型错误:")
+            parts.extend(wrong_type)
+        parts.append(f"请修正后重新调用 reqflow_verify(gate=\"{gate}\", evidence={{...}})")
+        return "\n".join(parts)
+    return None
+
+
 async def _handle_verify(arguments: dict) -> list:
     """处理 reqflow_verify 工具调用。门禁验证。"""
     run_id = arguments.get("run_id", "")
@@ -1610,6 +1697,11 @@ async def _handle_verify(arguments: dict) -> list:
 
     if not run_id or not gate:
         return [TextContent(type="text", text="[错误] run_id 和 gate 不能为空。")]
+
+    # Validate evidence against schema
+    validation_error = _validate_evidence(gate, evidence)
+    if validation_error:
+        return [TextContent(type="text", text=validation_error)]
 
     from datetime import datetime as _dt
 
@@ -2183,6 +2275,7 @@ async def _handle_full_flow(arguments: dict) -> list:
         "change_dir": change.path,
         "routing_level": "delivery_loop",
         "auto_pilot": auto_pilot,
+        "mode": "auto_pilot — 跳过中间确认，仅验收时停止" if auto_pilot else "standard — 每阶段停止等待确认",
         "stages_count": len(skill.stages),
         "exec_skill_path": skill_path,
     }, ensure_ascii=False, indent=2))]
