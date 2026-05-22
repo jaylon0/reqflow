@@ -281,11 +281,28 @@ Agent 执行阶段使用多智能体协调模式：
 
 ### ⛔ Agent 派遣规则
 
-每个阶段的 agent 角色矩阵由 Execution Skill 定义。派遣规则：
-- 同一阶段的 agents 必须并行派遣（同一条消息中多个 Agent tool call）
+**核心原则：多 Agent 协作必须真实派遣独立执行单元，不得自己扮演多个角色。**
+
+**平台检测与适配：**
+执行前必须检测当前平台的多 Agent 能力：
+- 有 subagent / 子 agent 能力 → **必须使用真实派遣**
+- 无 subagent 能力 → 记录 `[限制] 当前平台不支持多 Agent 派遣`，分别以不同角色视角独立分析
+
+| 平台 | 派遣方式 | 并行 | 说明 |
+|------|----------|------|------|
+| Claude Code | Agent tool (subagent) | ✅ | `.claude/agents/` 定义，同一消息多 Agent tool call 并行；实验性 Agent Teams 支持多实例协作 |
+| Codex | Subagent workflows | ✅ | `.codex/agents/` TOML 定义，默认 max_threads=6，内置 default/worker/explorer，`/agent` 管理线程 |
+| Cursor | Cloud agents | ✅ | Agents Window 管理，支持 fleets of parallelized agents，Jira 集成触发，automations 定时触发 |
+| GitHub Copilot | Coding Agent | 有限 | VS Code agent mode + 自主 PR 创建，CLI 层面无 subagent |
+| Gemini CLI | **无 subagent** | ❌ | 单 agent + MCP 工具扩展，无多 agent 能力 |
+| 其他 | 检测可用能力 | ? | 有 subagent 就用，没有则记录限制 |
+
+**派遣规范：**
+- 同一阶段的 agents 必须**并行派遣**（平台支持时）或**顺序派遣**
 - required agent 不得省略
 - optional agent 超时可降级
 - 主 agent 不得代替子 agent 回答
+- **不得跳过多 Agent 协作步骤 — 即使平台不支持 subagent，也必须分别输出各角色的独立结论**
 
 ## Loop Engine（修复循环）
 
@@ -364,6 +381,23 @@ observe → classify → localize → patch → verify → review → decide
 - **技术方案阶段不要只给一个方案 — 必须对比 2-3 个候选方案**
 - **不要在关键模块完成后直接继续 — 必须等待用户确认**
 - **小问题自行修复后不要隐瞒 — 必须在对话中列出**
+
+## ⛔ MCP 即时输出规则
+
+每次调用 MCP 工具后，必须立即在对话中输出：
+
+1. **工具名 + 输入参数摘要**（一行，📡 前缀）
+2. **返回结果摘要**（一行，用 ✅/❌ 标记）
+3. **失败时输出失败原因和修复计划**
+
+格式：
+```
+📡 reqflow_report(stage="PRD理解") → ✅ 已记录 (阶段 2/11, 18%)
+📡 reqflow_verify(gate="tdd-gate") → ❌ 未通过: failing_tests_count 缺失
+🔧 修复计划: 编写失败测试后重新提交
+```
+
+⛔ **禁止静默调用 MCP 工具不输出。**
 
 ## 执行流程
 
