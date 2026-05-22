@@ -4,7 +4,7 @@ import json
 from core.confidence_tracker import (
     ConfidenceTracker,
     DimensionResult,
-    Warning,
+    ConfidenceWarning,
     ConfidenceReport,
 )
 
@@ -58,7 +58,7 @@ def test_minimum_gate_warning():
     report = tracker.assess(scores)
     assert len(report.warnings) >= 1
     assert any(w.dimension == "accuracy" for w in report.warnings)
-    assert all(isinstance(w, Warning) for w in report.warnings)
+    assert all(isinstance(w, ConfidenceWarning) for w in report.warnings)
 
 
 def test_progress_bar_rendering():

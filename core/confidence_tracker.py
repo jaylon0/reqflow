@@ -46,7 +46,7 @@ class DimensionResult:
 
 
 @dataclass
-class Warning:
+class ConfidenceWarning:
     """Warning for a dimension below gate threshold."""
     dimension: str
     score: float
@@ -60,7 +60,7 @@ class ConfidenceReport:
     core_dimensions: list[DimensionResult]
     extended_dimensions: list[DimensionResult]
     overall: float
-    warnings: list[Warning]
+    warnings: list[ConfidenceWarning]
     trend_delta: float | None = None
     previous_overall: float | None = None
 
@@ -204,7 +204,7 @@ class ConfidenceTracker:
         lines.append("")
         lines.append("## Heat Map Distribution")
         lines.append("")
-        heat_counts = {"\U0001f7e9": 0, "\U0001f7e8": 0, "\U0001f7e7": 0, "\U0001f7e5": 0}
+        heat_counts = {emoji: 0 for _, emoji in HEAT_THRESHOLDS}
         for r in results:
             heat = self.heat_emoji(r.overall)
             heat_counts[heat] = heat_counts.get(heat, 0) + 1
@@ -262,7 +262,7 @@ class ConfidenceTracker:
         warnings = []
         for d in dims:
             if d.score < self.GATE_THRESHOLD:
-                warnings.append(Warning(
+                warnings.append(ConfidenceWarning(
                     dimension=d.name,
                     score=d.score,
                     threshold=self.GATE_THRESHOLD,
