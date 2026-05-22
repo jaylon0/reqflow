@@ -579,6 +579,18 @@ compliance-report:
         },
     },
     {
+        "name": "reqflow_artifact_check",
+        "description": "检查阶段产物完整性。对比 L3 预期产物清单和实际文件。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "检查指定阶段（空=检查全部）"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
         "name": "reqflow_full_flow",
         "description": "强制全流程入口，跳过路由分析直接使用 L3 管线（11 阶段）",
         "inputSchema": {
@@ -2308,6 +2320,105 @@ async def _handle_artifact_register(arguments: dict) -> list:
     return [TextContent(type="text", text=f"✅ 已注册产物: {artifact_path} (阶段: {stage})")]
 
 
+# L3 阶段产物定义
+_L3_ARTIFACTS = {
+    "启动": ["state.json", "memory.md"],
+    "PRD理解": ["01_prd_summary.md"],
+    "Spec治理": ["02_spec_delta.md"],
+    "工作流智能": ["03_workflow_intelligence.md", "agent/scenario.json", "agent/work_items.seed.json"],
+    "上下文发现": ["04_context_discovery.md"],
+    "技术方案": ["05_tech_plan.md", "spec.md"],
+    "实施计划": ["06_impl_plan.md", "agent/work_items.seed.json"],
+    "Agent执行": ["07_agent_execution.md", "agent/work_items.json"],
+    "代码审查": ["08_code_review.md"],
+    "交付验证": ["09_verification.md"],
+    "总结": ["summary/summary.md", "summary/metrics.md"],
+    "归档": ["11_archive.md", "acceptance.json"],
+    "_global": ["brainstorming/", "conversation.md"],
+}
+
+
+async def _handle_artifact_check(arguments: dict) -> list:
+    """检查阶段产物完整性。对比预期产物和实际文件。"""
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+
+    if not run_id:
+        return [TextContent(type="text", text="[错误] run_id 不能为空。")]
+
+    run_path = _resolve_run_dir(run_id)
+    if not run_path.exists():
+        return [TextContent(type="text", text=f"[错误] 未找到 run 目录: {run_path}")]
+
+    existing = set()
+    for f in run_path.rglob("*"):
+        if f.is_file():
+            existing.add(str(f.relative_to(run_path)))
+
+    lines = [f"=== 产物完整性检查: {run_id} ===", ""]
+
+    stages_to_check = {stage} if stage else set(_L3_ARTIFACTS.keys()) - {"_global"}
+    total_expected = 0
+    total_found = 0
+
+    for s in sorted(stages_to_check):
+        expected = _L3_ARTIFACTS.get(s, [])
+        if not expected:
+            continue
+        found = []
+        missing = []
+        for art in expected:
+            if art.endswith("/"):
+                dir_prefix = art.rstrip("/")
+                if any(dir_prefix in str(p) for p in existing):
+                    found.append(art)
+                else:
+                    missing.append(art)
+            else:
+                if art in existing:
+                    found.append(art)
+                else:
+                    missing.append(art)
+        total_expected += len(expected)
+        total_found += len(found)
+        if missing:
+            lines.append(f"  [{s}] {len(found)}/{len(expected)} - 缺失: {', '.join(missing)}")
+        else:
+            lines.append(f"  [{s}] {len(found)}/{len(expected)} ✅")
+
+    global_expected = _L3_ARTIFACTS.get("_global", [])
+    if global_expected:
+        global_found = []
+        global_missing = []
+        for art in global_expected:
+            if art.endswith("/"):
+                dir_prefix = art.rstrip("/")
+                if any(dir_prefix in str(p) for p in existing):
+                    global_found.append(art)
+                else:
+                    global_missing.append(art)
+            else:
+                if art in existing:
+                    global_found.append(art)
+                else:
+                    global_missing.append(art)
+        total_expected += len(global_expected)
+        total_found += len(global_found)
+        lines.append("")
+        if global_missing:
+            lines.append(f"  [全局] {len(global_found)}/{len(global_expected)} - 缺失: {', '.join(global_missing)}")
+        else:
+            lines.append(f"  [全局] {len(global_found)}/{len(global_expected)} ✅")
+
+    lines.insert(1, f"总计: {total_found}/{total_expected} 产物已生成")
+
+    if total_found < total_expected:
+        lines.append("")
+        lines.append("请补充缺失产物后重新检查。")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
 async def _handle_multi_repo_switch(arguments: dict) -> list:
     """处理 reqflow_multi_repo_switch 工具调用。"""
     project_dir = arguments.get("project_dir", ".")
@@ -2574,6 +2685,7 @@ TOOL_HANDLERS = {
     "reqflow_multi_repo_switch": _handle_multi_repo_switch,
     "reqflow_acceptance_update": _handle_acceptance_update,
     "reqflow_artifact_register": _handle_artifact_register,
+    "reqflow_artifact_check": _handle_artifact_check,
     # --- V5 新增工具 ---
     "reqflow_full_flow": _handle_full_flow,
     "reqflow_brainstorm": _handle_brainstorm,
