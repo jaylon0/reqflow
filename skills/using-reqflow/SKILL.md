@@ -1,46 +1,334 @@
 ---
 name: using-reqflow
 description: >
+  ⛔ 必须在对话中输出详细阶段报告、置信度评估、Agent 共识。
+  ⛔ 必须派遣指定 Agent，不得跳过。
+  ⛔ 必须调用 reqflow_stage_report、reqflow_dispatch_agent。
+  ⛔ 每阶段完成后必须等待用户确认，确认前不得进入下一阶段。
   ReqFlow Harness 使用指南。从需求到交付的完整工程化流程。
-  Harness 模式：生成 Execution Skill，Agent 按剧本执行。
-  V4: 全流程自检纠错、辅助 Agent 集成、多方案对比、关键模块确认。
 ---
 
 # using-reqflow
 
 ReqFlow Harness 使用指南。引导用户完成从需求到交付的全流程。
 
-## 核心理念
+## ⛔ 核心规则（必须遵循）
 
-**Harness 生成剧本，Agent 执行演出。**
+> **以下规则不可违反。违反任何一条即为流程失败。**
 
-ReqFlow 是一个 Harness（编排器），它：
-1. 分析需求，决定路由级别（L0/L1/L2/L3）
-2. 扫描项目上下文
-3. 根据路由级别生成对应的 Execution Skill（执行剧本）
-4. Agent 按剧本执行，通过 MCP 工具回报状态
+### 规则 1: 必须通过 MCP 工具启动
 
-## 全流程入口
-
-**强制 L3 全流程：**
-- Slash: `/reqflow:full-flow <需求>`
-- 自然语言: "跑完整流程" / "完整执行"
-- MCP: `reqflow_full_flow(requirement="...")`
-
-**指定级别：**
-- MCP: `reqflow_plan(requirement="...", level="L2")`
-
-## 触发方式
-
-**自然语言：**
 ```
-使用 reqflow 帮我处理这个需求：<需求内容>
+reqflow_plan(requirement="<需求描述>")
 ```
 
-**Slash 命令：**
+**不得自行编排流程，不得跳过 MCP 调用。**
+
+### 规则 2: 必须读取 Execution Skill
+
+启动后读取生成的 Execution Skill，确认路由级别和阶段列表。**不得修改 Execution Skill 本身。**
+
+### 规则 3: 必须执行所有阶段
+
+**每个阶段必须完整执行以下全部动作，不得跳过、不得简化、不得合并：**
+
 ```
-/reqflow:using-reqflow <需求内容>
+┌─────────────────────────────────────────────────────────────┐
+│  ① 执行阶段任务                                              │
+│     ↓                                                       │
+│  ② 自检（产出完整性、一致性、遗漏）                           │
+│     ↓                                                       │
+│  ③ 问题发现（主动识别问题，小问题自行修复）                    │
+│     ↓                                                       │
+│  ④ ⛔ 强制 Agent 视角输出（多 Agent 协作）                    │
+│     ↓                                                       │
+│  ⑤ ⛔ 共识表（必须输出）                                     │
+│     ↓                                                       │
+│  ⑥ ⛔ 质量门（必须执行）                                     │
+│     ↓                                                       │
+│  ⑦ ⛔ 置信度评估（6 维度）                                   │
+│     ↓                                                       │
+│  ⑧ ⛔ 反思点（必须执行）                                     │
+│     ↓                                                       │
+│  ⑨ 产物验证（文件存在性检查）                                 │
+│     ↓                                                       │
+│  ⑩ ⛔ 在对话中展示产出摘要（不是只写文件）                    │
+│     ↓                                                       │
+│  ⑪ ⛔ 调用 reqflow_stage_report 报告阶段状态                 │
+│     ↓                                                       │
+│  ⑫ ⛔ 停止等待用户确认（不得自动进入下一阶段）                 │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+### 规则 4: 不得跳过任何阶段
+
+按 Execution Skill 定义的阶段顺序执行，**不得跳过任何阶段**。
+
+### 规则 5: P0 阻塞时必须停止
+
+遇到以下情况必须停止等待用户决策：
+- 有 P0 级 BLOCKER
+- spec delta 变更持久行为
+- 场景检测有歧义
+- 关键模块完成（数据库 schema、核心业务逻辑、安全代码、多服务接口）
+
+### 规则 6: 必须等待用户验收
+
+所有阶段完成后必须停止，等待用户调用 `reqflow_accept` 或 `reqflow_reject`。**不得自行调用 `reqflow_accept`。**
+
+---
+
+## ⛔ V7 强制规则
+
+### 每阶段必须调用 `reqflow_stage_report`
+
+每个阶段完成后，⛔ **必须** 调用 `reqflow_stage_report` 生成结构化报告：
+
+```
+reqflow_stage_report(
+    run_id="<run_id>",
+    stage_name="<阶段名称>",
+    completed_items=["完成项1", "完成项2"],
+    risk_items=["风险项1"],
+    confidence_score=85,
+    next_steps=["下一步1"],
+    artifacts=["产物1.md"]
+)
+```
+
+### 每阶段必须派遣指定 Agent
+
+根据阶段自动派遣指定 Agent，不得跳过：
+
+| 阶段 | 必须派遣的 Agent |
+|------|------------------|
+| 启动 | 无 |
+| PRD理解 | research-agent, architecture-agent |
+| Spec治理 | security-agent |
+| 工作流智能 | research-agent |
+| 上下文发现 | research-agent |
+| 技术方案 | architecture-agent, security-agent |
+| 实施计划 | test-gen-agent |
+| Agent执行 | 动态派遣 |
+| 代码审查 | security-agent, performance-agent |
+| 交付验证 | test-gen-agent |
+| 总结 | doc-agent |
+| 归档 | 无 |
+
+派遣时必须调用 `reqflow_dispatch_agent`：
+
+```
+reqflow_dispatch_agent(
+    run_id="<run_id>",
+    stage_name="<阶段名称>",
+    agent_role="research-agent",
+    task_description="任务描述"
+)
+```
+
+### 验收时必须调用 `reqflow_acceptance_options`
+
+交付验证阶段完成后，⛔ **必须** 调用 `reqflow_acceptance_options` 生成验收选项：
+
+```
+reqflow_acceptance_options(
+    run_id="<run_id>",
+    deliverables=["交付物1", "交付物2"],
+    verification_results=[
+        {"item": "编译", "status": "pass", "detail": "BUILD SUCCESS"},
+        {"item": "测试", "status": "pass", "detail": "1 test passed"}
+    ]
+)
+```
+
+### 生成产物时必须注册
+
+每次生成产物文件时，⛔ **必须** 调用 `reqflow_artifact_register` 注册：
+
+```
+reqflow_artifact_register(
+    run_id="<run_id>",
+    stage="<阶段名称>",
+    artifacts=["文件路径1", "文件路径2"]
+)
+```
+
+### 归档前必须检查产物完整性
+
+归档阶段开始前，⛔ **必须** 调用 `reqflow_artifact_check` 检查产物完整性：
+
+```
+reqflow_artifact_check(run_id="<run_id>")
+```
+
+如果有缺失产物，必须补齐后才能继续。
+
+---
+
+## ⛔ MCP 即时输出规则
+
+每次调用 MCP 工具后，必须立即在对话中输出：
+
+1. **工具名 + 输入参数摘要**（一行，📡 前缀）
+2. **返回结果摘要**（一行，用 ✅/❌ 标记）
+3. **失败时输出失败原因和修复计划**
+
+格式：
+```
+📡 reqflow_report(stage="PRD理解") → ✅ 已记录 (阶段 2/11, 18%)
+📡 reqflow_verify(gate="tdd-gate") → ❌ 未通过: failing_tests_count 缺失
+🔧 修复计划: 编写失败测试后重新提交
+```
+
+⛔ **禁止静默调用 MCP 工具不输出。**
+
+---
+
+## ⛔ Agent 真实派遣规则
+
+**核心原则：多 Agent 协作必须真实派遣独立执行单元，不得自己扮演多个角色。**
+
+### 平台检测与适配
+
+执行前必须检测当前平台的多 Agent 能力，按以下优先级使用：
+
+| 平台 | 派遣方式 | 并行 | 说明 |
+|------|----------|------|------|
+| Claude Code | Agent tool (subagent) | ✅ | `.claude/agents/` 定义，同一消息多 Agent tool call 并行 |
+| Codex | Subagent workflows | ✅ | `.codex/agents/` TOML 定义，`/agent` 管理线程 |
+| Cursor | Cloud agents | ✅ | Agents Window 管理，支持并行 agents |
+| GitHub Copilot | Coding Agent | 有限 | VS Code agent mode + 自主 PR 创建 |
+| Gemini CLI | **无 subagent** | ❌ | 单 agent + MCP 工具扩展 |
+| 其他平台 | 检测可用能力 | ? | 有 subagent 就用，没有则记录限制 |
+
+**检测规则：**
+1. 检查当前工具是否支持 subagent / 子 agent / 多 agent 派遣
+2. 如果支持 → **必须使用真实派遣**，不得跳过
+3. 如果不支持（如 Gemini CLI）→ 记录 `[限制] 当前平台不支持多 Agent 派遣，使用单 Agent 顺序执行`
+
+### 派遣规范
+
+每个阶段的 agent 角色矩阵由 Execution Skill 定义。派遣时：
+- 同一阶段的 agents 必须**并行派遣**（平台支持时）或**顺序派遣**（平台不支持并行时）
+- 每个 agent 的 prompt 必须包含：**角色定义、任务描述、上下文、输出格式**
+- 主 agent 不得"代替"任何子 agent 回答
+- 子 agent 超时或失败时，按降级策略处理
+- **无论使用何种平台，都不得跳过多 Agent 协作步骤**
+
+### 禁止事项
+
+- **不得自己扮演多个 Agent 角色** — 即使平台不支持 subagent，也必须分别以不同角色视角独立分析
+- **不得跳过 Agent 视角输出** — 每个 required agent 都必须有独立结论
+- **不得合并不同 Agent 的结论为单一输出**
+
+---
+
+## ⛔ 阶段报告结构
+
+每个阶段完成后必须在对话中输出完整报告：
+
+```
+### 📋 阶段报告：{stage_name}
+
+**状态:** ✅ 完成 | ⚠️ 有警告 | ❌ 失败
+
+#### 产出清单
+| 文件 | 操作 | 存在 | 状态 |
+|------|------|------|------|
+| xxx.java | 新增 | ✅ | 通过 |
+产物完整性: 1/1 通过
+
+#### 置信度（6 维度 + Unicode 可视化）
+| 维度 | 分数 | 进度 | 热力 | 趋势 |
+|------|------|------|------|------|
+| 完整性 | 0.85 | ████████░ | 🟩 | ↑ |
+| 一致性 | 0.90 | █████████ | 🟩 | → |
+| 准确性 | 0.78 | ███████░░ | 🟨 | ↑ |
+| 可测试性 | 0.72 | ███████░░ | 🟨 | → |
+| 风险覆盖 | 0.65 | ██████░░░ | 🟧 | ↓ |
+| Spec合规 | 0.80 | ████████░ | 🟩 | ↑ |
+**综合: 0.79 (medium)**
+
+#### Agent 共识
+| Agent | 结论 | 置信度 |
+|-------|------|--------|
+| leader-agent | ... | 86% |
+| dev-agent | ... | 92% |
+
+#### MCP 执行追踪
+| 工具 | 参数 | 结果 |
+|------|------|------|
+| reqflow_report | stage="PRD理解" | ✅ |
+
+#### 问题与风险
+- [自修复] xxx
+- [需确认] xxx
+- [阻塞] xxx
+
+#### 趋势
+置信度趋势: 0.72 → 0.79 (↑0.07)
+
+#### 下一步
+...
+
+#### 阶段确认面板
+
+### 📋 阶段确认：{stage_name}
+| 选项 | 操作 | 说明 |
+|------|------|------|
+| ✅ 确认通过 | 进入下一阶段 | 产出已验证 |
+| 🔄 重新执行 | 重新运行本阶段 | 发现问题 |
+| ✏️ 修改需求 | 调整需求后重新分析 | 需求变化 |
+| ⏭ 跳过 | 直接进入下一阶段 | 不推荐 |
+```
+
+---
+
+## 产物验证
+
+每个修改文件的阶段结束后，必须验证产物：
+- 调用 ArtifactVerifier 检查文件是否存在
+- 输出产物验证表：
+  ```
+  #### 产物验证
+  | 文件 | 操作 | 存在 | 状态 |
+  |------|------|------|------|
+  | PlaceholderController.java | 修改 | ✅ | 通过 |
+  产物完整性: 1/1 通过
+  ```
+
+---
+
+## ⛔ 验收决策面板
+
+所有阶段完成后必须展示完整验收决策面板：
+
+```
+### 🏁 验收决策面板
+
+**当前状态:** 全部阶段完成，等待你的验收决定。
+
+#### 已交付产物清单
+| 文件 | 变更类型 | 验证状态 |
+|------|----------|----------|
+| xxx.java | 新增 | 编译通过 |
+
+#### 质量摘要
+- 门禁通过: 4/4
+- 置信度: 0.79 (medium)
+- P0 阻塞: 0
+- 验收标准: 1/1 verified
+
+#### 请做出决定
+| 选项 | 操作 | 后续流程 |
+|------|------|----------|
+| ✅ 通过验收 | reqflow_accept | 归档、清理、流程结束 |
+| ❌ 拒绝验收 | reqflow_reject | 修复循环（最多 3 轮） |
+| 🔧 部分验收 | reqflow_accept + scope | 部分归档 |
+| ⏸ 暂挂 | 不调用工具 | 保持状态 |
+```
+
+---
 
 ## 路由级别与阶段模板
 
@@ -53,191 +341,59 @@ ReqFlow 根据需求内容自动路由到不同级别，每个级别映射到 YA
 | L2 计划性修改 | 多文件功能开发 | 9 | 启动 → PRD理解 → 上下文发现 → 技术方案 → 实施计划 → Agent执行 → 代码审查 → 交付验证 → 归档 |
 | L3 交付循环 | API/DB/消息/安全/部署变更 | 11 | 启动 → PRD理解 → Spec治理 → 工作流智能 → 上下文发现 → 技术方案 → 实施计划 → Agent执行 → 代码审查 → 交付验证 → 归档 |
 
-**Agent 必须按 Execution Skill 中定义的阶段顺序执行，不得跳过任何阶段。**
-
-## V4 全流程自检纠错
-
-每个阶段（除启动和归档）执行时，遵循标准动作序列：
-
-```
-执行任务 → 自检 → 问题发现 → 自行修复 → 辅助 Agent → 对话中展示摘要 → 等待确认
-```
-
-- **自检**：检查本阶段产出的完整性和一致性
-- **问题发现**：主动识别潜在问题、遗漏、矛盾
-- **自行修复**：小问题直接修复，在对话中列出
-- **辅助 Agent**：按需调用专项 Agent，在对话中展示 findings 摘要
-- **对话中展示摘要**：每个阶段必须在对话中给出概括，不能只写到文件里
-- **确认点**：展示结果后 ⛔ 停止执行，等待用户确认后才进入下一阶段
-
-**关键规则：**
-- 技术方案阶段必须对比 2-3 个候选方案，给出推荐
-- 关键模块完成后必须暂停等待用户确认
-- 小问题自行修复但必须在对话中列出
-- 辅助 Agent 的 findings 必须在对话中展示摘要
-- **每阶段完成后必须等待用户确认，确认前不得进入下一阶段**
-
-## 强制执行协议
-
-> **⛔ 以下规则不可违反，违反任何一条即为流程失败。**
-
-### 规则 1: 必须执行所有阶段
-
-Agent 读取 Execution Skill 后，**必须按顺序执行其中定义的每一个阶段**。
-不得跳过任何阶段，不得提前结束，不得在只完成部分阶段时声称"已完成"。
-
-### 规则 2: 每阶段必须报告
-
-每个阶段完成后，**必须调用 `reqflow_report`** 报告该阶段状态：
-```
-reqflow_report(run_id="<run-id>", stage="<阶段名称>", status="done", artifacts=[...])
-```
-
-### 规则 3: 门禁必须验证
-
-Execution Skill 中指定的门禁检查点，**必须调用 `reqflow_verify`** 进行验证：
-- L2/L3 的"跨模块终检"阶段必须调用 `reqflow_verify(gate="completion-gate")`
-- L0/L1 的"局部验证"/"分析报告"阶段根据 Execution Skill 指引决定是否需要门禁
-- 门禁未通过时，必须按指引修复后重新验证，不得跳过
-
-### 规则 4: 必须等待用户验收
-
-所有阶段完成后，Agent **必须停止执行并等待用户验收**：
-- 向用户展示完成状态和产出物摘要
-- **明确告知用户**："所有阶段已完成，请验收。调用 `reqflow_accept` 通过或 `reqflow_reject` 拒绝。"
-- **不得自行调用 `reqflow_accept`** — 只有用户才能决定是否通过
-- **不得在未收到用户验收决定前结束会话**
-
-### 规则 5: 用户拒绝后必须进入修复循环
-
-**⛔ 这是一个循环，不是单次操作。Agent 不得在拒绝后结束会话。**
-
-如果用户调用 `reqflow_reject`，Agent 必须：
-1. 记录拒绝原因（如果用户未提供具体原因，主动询问）
-2. 回到相关阶段修复问题（代码→Agent执行, 设计→技术方案, 验证→交付验证）
-3. 修复后重新走完剩余阶段
-4. 重新调用门禁验证
-5. 再次展示完成状态
-6. 再次等待用户验收
-7. 如果再次拒绝 → 继续循环
-
-**循环无次数上限 — 必须持续直到用户调用 `reqflow_accept`。**
-
-**处理完用户任何反馈后，必须主动回到验收流程：**
-- 用户说"测试一下" → 执行测试 → 测试通过后**必须主动重新提交验收**
-- 用户说"改一下XX" → 修改 → 修改完成后**必须主动重新提交验收**
-- 用户给出任何反馈 → 处理完成后**必须主动询问是否通过验收**
-- **不能等用户再次触发验收，必须主动发起**
-
-## 流程
-
-### 1. 创建计划
-
-调用 `reqflow_plan` 开始新计划：
-```
-reqflow_plan(requirement="<需求描述>")
-```
-
-Harness 会自动：
-- 路由分析（L0/L1/L2/L3）
-- 入口点检测（prd/tech_plan/resume）
-- 上下文扫描（项目结构、技术栈、入口文件）
-- 根据路由级别生成对应的 Execution Skill
-
-### 2. 读取 Execution Skill
-
-```
-cat .reqflow/runs/<run-id>/exec-skill.md
-```
-
-Execution Skill 头部包含路由级别和阶段列表，Agent 必须据此执行。
-
-### 3. 按阶段执行（强制）
-
-按 Execution Skill 定义的阶段**顺序执行**。每个阶段完成后必须调用 `reqflow_report`。
-
-### 4. BLOCKER 管理
-
-每个阶段可能产生 BLOCKER：
-
-| 级别 | 含义 | 处理方式 |
-|------|------|----------|
-| P0 | 阻塞，必须关闭 | 所有 P0 关闭前不得进入下一阶段 |
-| P1 | 标记，不阻塞 | 记录并在后续阶段处理 |
-| P2 | 仅记录 | 仅记录，不影响流程 |
-
-使用 `reqflow_blocker_add` 添加，`reqflow_blocker_resolve` 解决。
-
-### 5. 门禁检查
-
-需要门禁检查时调用 `reqflow_verify`：
-```
-reqflow_verify(run_id="<run-id>", gate="completion-gate", evidence={...})
-```
-
-### 6. 用户验收（强制停止点）
-
-> **⛔ 所有阶段完成后，Agent 必须在此停止。**
-
-Agent 必须：
-1. 调用 `reqflow_dashboard` 展示运行面板
-2. 汇总所有已完成阶段和产出物
-3. 告知用户："请验收。通过请调用 `reqflow_accept`，拒绝请调用 `reqflow_reject`。"
-4. **等待用户响应，不得自行结束**
-
-### 7. 验收结果处理
-
-- 用户通过: `reqflow_accept(run_id="<run-id>")`
-- 用户拒绝: `reqflow_reject(run_id="<run-id>", reason="...")`
-
-拒绝后 Agent 回到修复流程，修复完成后再次等待验收。
-
-### 规则 6: 每阶段必须自检
-
-每个阶段（除启动和归档）完成后，Agent 必须：
-1. 检查产出的完整性和一致性
-2. 主动发现潜在问题
-3. 小问题自行修复，在对话中列出
-4. 按需调用辅助 Agent，在对话中展示 findings 摘要
-
-### 规则 7: 技术方案必须多方案对比
-
-技术方案阶段必须对比 2-3 个候选方案，输出评估矩阵，给出推荐方案和理由，由用户最终决定。
-
-### 规则 8: 关键模块必须用户确认
-
-Agent 执行阶段，关键模块完成后必须暂停等待用户确认后再继续。非关键模块可自行完成并报告。
-
-### 规则 9: 每阶段必须在对话中展示摘要
-
-每个阶段的产出必须在对话中给出概括，不能只写到文件里。用户不会每次都打开文件查看。
-
-### 规则 10: 每阶段完成后必须等待用户确认
-
-每个阶段完成后，Agent 必须 ⛔ 停止执行，在对话中展示产出摘要和问题发现，明确告知用户"本阶段完成，请确认后继续下一步"，等待用户确认后才进入下一阶段。
+---
 
 ## MCP 工具
 
-| 工具 | 用途 |
-|------|------|
-| `reqflow_plan` | 开始新计划 |
-| `reqflow_run` | 执行 workflow |
-| `reqflow_status` | 查询运行状态 |
-| `reqflow_report` | 报告阶段完成 |
-| `reqflow_verify` | 门禁验证 |
-| `reqflow_accept` | 用户验收通过 |
-| `reqflow_reject` | 用户验收拒绝 |
-| `reqflow_dashboard` | Dashboard 可视化 |
-| `reqflow_blocker_add` | 添加 BLOCKER |
-| `reqflow_blocker_resolve` | 解决 BLOCKER |
-| `reqflow_blocker_check` | 检查 BLOCKER 状态 |
-| `reqflow_memory_save` | 保存长期记忆 |
-| `reqflow_memory_load` | 加载长期记忆 |
-| `reqflow_git_check` | 检查 Git 状态 |
-| `reqflow_acceptance_update` | 更新验收标准状态 |
-| `reqflow_health` | 健康检查 |
+| 工具 | 用途 | 必须调用 |
+|------|------|----------|
+| `reqflow_plan` | 开始新计划 | - |
+| `reqflow_run` | 执行 workflow | - |
+| `reqflow_status` | 查询运行状态 | - |
+| `reqflow_report` | 报告阶段完成 | ✅ 每阶段 |
+| `reqflow_verify` | 门禁验证 | ✅ 有门禁时 |
+| `reqflow_accept` | 用户验收通过 | - |
+| `reqflow_reject` | 用户验收拒绝 | - |
+| `reqflow_dashboard` | Dashboard 可视化 | - |
+| `reqflow_blocker_add` | 添加 BLOCKER | - |
+| `reqflow_blocker_resolve` | 解决 BLOCKER | - |
+| `reqflow_blocker_check` | 检查 BLOCKER 状态 | - |
+| `reqflow_memory_save` | 保存长期记忆 | - |
+| `reqflow_memory_load` | 加载长期记忆 | - |
+| `reqflow_git_check` | 检查 Git 状态 | - |
+| `reqflow_acceptance_update` | 更新验收标准状态 | - |
+| `reqflow_health` | 健康检查 | - |
+| `reqflow_stage_report` | 生成结构化阶段报告 | ✅ 每阶段 |
+| `reqflow_dispatch_agent` | 记录并验证 Agent 派遣 | ✅ 派遣时 |
+| `reqflow_acceptance_options` | 生成验收选项 | ✅ 验收时 |
+| `reqflow_artifact_register` | 注册生成的产物 | ✅ 生成产物时 |
+| `reqflow_artifact_check` | 检查产物完整性 | ✅ 归档前 |
 
-## 相关 Skills
+---
 
-- `requirement-flow` — 主入口
-- `harness-orchestrator` — 如何使用 Execution Skill
+## 禁止事项
+
+- **不得自行编排流程 — 必须通过 MCP 工具启动**
+- **不得跳过任何阶段**
+- **不得跳过自检和问题发现**
+- **不得跳过 Agent 视角输出 — 必须通过 Agent tool 真实派遣**
+- **不得跳过共识表**
+- **不得跳过质量门**
+- **不得跳过置信度评估（6 维度）**
+- **不得跳过反思点**
+- **不得跳过产物验证**
+- **不得跳过在对话中展示摘要**
+- **不得跳过 reqflow_report 调用**
+- **不得在有 P0 阻塞时继续执行**
+- **不得自行调用 reqflow_accept**
+- **不得静默调用 MCP 工具 — 每次调用后必须输出 📡 即时反馈**
+- **技术方案不得只给一个方案 — 必须对比 2-3 个候选方案**
+- **不得跳过 reqflow_stage_report 调用 — 每阶段必须生成结构化报告**
+- **不得跳过 reqflow_dispatch_agent 调用 — 派遣 Agent 时必须记录**
+- **不得跳过 reqflow_acceptance_options 调用 — 验收时必须生成选项**
+- **不得跳过 reqflow_artifact_register 调用 — 生成产物时必须注册**
+- **不得跳过 reqflow_artifact_check 调用 — 归档前必须检查完整性**
+
+## 沟通语言
+
+始终使用中文与用户沟通。技术术语和代码标识符保持原样。
