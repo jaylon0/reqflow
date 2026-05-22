@@ -578,15 +578,15 @@ compliance-report:
     },
     {
         "name": "reqflow_brainstorm",
-        "description": "触发多 Agent 头脑风暴（round-robin/panel-of-experts/adversarial-debate/critique-refine/structured-debate）",
+        "description": "返回 Agent 角色定义和头脑风暴指引。宿主 agent 必须逐个派遣 Agent 执行真实分析。",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "mode": {"type": "string", "enum": ["round-robin", "panel-of-experts", "adversarial-debate", "critique-refine", "structured-debate"], "description": "头脑风暴模式"},
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "mode": {"type": "string", "enum": ["round-robin", "panel-of-experts", "adversarial-debate", "critique-refine"], "default": "round-robin"},
                 "agents": {"type": "array", "items": {"type": "string"}, "description": "参与 agent 列表"},
                 "topic": {"type": "string", "description": "讨论主题"},
-                "context": {"type": "string", "description": "上下文信息"},
-                "max_rounds": {"type": "integer", "description": "最大轮次", "default": 3},
+                "context": {"type": "string", "description": "讨论上下文"},
             },
             "required": ["mode", "agents", "topic", "context"],
         },
@@ -2359,35 +2359,86 @@ async def _handle_full_flow(arguments: dict) -> list:
 
 
 async def _handle_brainstorm(arguments: dict) -> list:
-    """触发多 Agent 头脑风暴。"""
+    """返回 Agent 角色定义和派遣指引。由宿主 agent 执行真实多 Agent 头脑风暴。"""
+    from datetime import datetime as _dt
+
     mode = arguments.get("mode", "round-robin")
     agents = arguments.get("agents", [])
     topic = arguments.get("topic", "")
     context = arguments.get("context", "")
-    max_rounds = arguments.get("max_rounds", 3)
+    run_id = arguments.get("run_id", "")
 
-    from reqflow.core.agent_coordinator import AgentCoordinator, BrainstormMode
-    coord = AgentCoordinator()
+    # Record brainstorm config in state
+    if run_id:
+        run_path = _resolve_run_dir(run_id)
+        state_path = run_path / "state.json"
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                brainstorms = state.setdefault("brainstorms", [])
+                brainstorms.append({
+                    "topic": topic,
+                    "mode": mode,
+                    "agents": agents,
+                    "timestamp": _dt.now().isoformat(),
+                })
+                state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+            except Exception:
+                pass
+
+    # Load agent role definitions
     try:
-        brainstorm_mode = BrainstormMode(mode)
-    except ValueError:
-        brainstorm_mode = BrainstormMode.ROUND_ROBIN
+        from reqflow.core.skill_generator import _AGENT_ROLES
+    except ImportError:
+        _AGENT_ROLES = {}
 
-    result = coord.brainstorm(
-        mode=brainstorm_mode,
-        agents=agents,
-        topic=topic,
-        context=context,
-        max_rounds=max_rounds,
-    )
+    leader_roles = {
+        "PRD理解": "需求审查官",
+        "Spec治理": "规格审计员",
+        "工作流智能": "流程架构师",
+        "上下文发现": "上下文裁判",
+        "技术方案": "技术决策者",
+        "实施计划": "任务分解官",
+        "Agent执行": "质量门禁官",
+        "代码审查": "审查综合者",
+        "交付验证": "最终裁决者",
+        "总结": "复盘主持人",
+    }
 
-    return [TextContent(type="text", text=json.dumps({
-        "mode": result.mode.value,
-        "rounds_count": len(result.rounds),
-        "consensus": result.consensus,
-        "summary": result.summary,
-        "fallback": result.fallback,
-    }, ensure_ascii=False, indent=2))]
+    leader_role = leader_roles.get(topic, "")
+    all_agents = (["leader-agent"] if leader_role else []) + agents
+
+    lines = [
+        f"=== 头脑风暴配置: {topic} ===",
+        f"模式: {mode}",
+        f"上下文: {context[:200]}",
+        "",
+        "参与 Agent 角色表:",
+        "",
+        "| Agent | 角色 | 职责 |",
+        "|-------|------|------|",
+    ]
+
+    if leader_role:
+        lines.append(f"| leader-agent | 统筹协调 | {leader_role}：路由、派遣、聚合、裁决 |")
+    for agent_name in agents:
+        info = _AGENT_ROLES.get(agent_name, {})
+        role = info.get("role", "通用")
+        resp = info.get("responsibility", "通用任务")
+        lines.append(f"| {agent_name} | {role} | {resp} |")
+
+    lines.extend([
+        "",
+        "请按以下步骤执行多 Agent 头脑风暴:",
+        "1. 展示上方角色表给用户",
+        "2. 逐个派遣 Agent（使用平台原生 subagent 机制）",
+        "3. 每个 Agent 输出: 观点 + 置信度(0-100%) + 理由",
+        "4. 输出共识表",
+        f"5. 记录讨论到 brainstorming/{topic}.md",
+        "6. 调用 reqflow_report 报告完成",
+    ])
+
+    return [TextContent(type="text", text="\n".join(lines))]
 
 
 async def _handle_confidence(arguments: dict) -> list:
