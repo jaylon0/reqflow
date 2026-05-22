@@ -1234,7 +1234,7 @@ def _stage_archive(
 归档阶段执行:
 1. 保留: `.reqflow/changes/{name}/` (交付记录)
 2. 清理: `target/` 编译产物 (自动删除)
-3. 清理: `.reqflow/changes/{name}/runs/{run_id}/tmp/` (临时文件)
+3. 清理: `.reqflow/changes/{name}/runs/{{run_id}}/tmp/` (临时文件)
 
 验收拒绝时:
 - 保留所有中间产物用于调试
@@ -1719,16 +1719,16 @@ def _stage_delivery_verification(
 
 不得假设测试命令格式。必须按以下顺序探测：
 
-1. **首选:** `mvn -pl {module} -am -Dtest={TestClass} test`
+1. **首选:** `mvn -pl {{module}} -am -Dtest={{TestClass}} test`
    - 成功 → 记录此命令
    - 失败 "No tests were executed" → 进入步骤 2
    - 失败 "Could not resolve dependencies" → 补 `-am` 重试
 
-2. **降级:** `mvn -pl {module} -am -Dtest={TestClass} -DfailIfNoTests=false test`
+2. **降级:** `mvn -pl {{module}} -am -Dtest={{TestClass}} -DfailIfNoTests=false test`
    - 检查 Tests run > 0 → 成功
    - Tests run: 0 → 进入步骤 3
 
-3. **兜底:** `java -cp {classpath} org.junit.runner.JUnitCore {TestClass}`
+3. **兜底:** `java -cp {{classpath}} org.junit.runner.JUnitCore {{TestClass}}`
    - 手动构建 classpath: test-classes + classes + 依赖 jar
    - 成功 → 记录完整 classpath 命令
 
@@ -2038,13 +2038,13 @@ reqflow_dashboard(run_dir=".reqflow/runs/{run_id}")
 #### 已交付产物清单
 | # | 文件 | 操作 | 验证 |
 |---|------|------|------|
-| {列出所有产物} |
+| {{列出所有产物}} |
 
 #### 质量摘要
-- 综合置信度: {overall}%
-- 门禁: {gate_results}
-- BLOCKER: P0={p0_count}, 全部={total_count}
-- Spec Drift: {drift_count} 项
+- 综合置信度: {{overall}}%
+- 门禁: {{gate_results}}
+- BLOCKER: P0={{p0_count}}, 全部={{total_count}}
+- Spec Drift: {{drift_count}} 项
 
 #### 请做出决定
 
