@@ -1778,6 +1778,18 @@ async def _handle_report(arguments: dict) -> list:
     if risks:
         report_entry["risks"] = risks
     state.setdefault("reports", []).append(report_entry)
+
+    # 记录 MCP 调用追踪
+    if "mcp_calls" not in state:
+        state["mcp_calls"] = []
+    state["mcp_calls"].append({
+        "tool": "reqflow_report",
+        "stage": stage,
+        "params": {"stage": stage, "status": status},
+        "result": "✅",
+        "timestamp": _dt.now().isoformat(),
+    })
+
     state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # 进度信息
@@ -2780,10 +2792,28 @@ async def _handle_stage_report(arguments: dict) -> list:
 
     # 记录到 state.json
     run_dir = _resolve_run_dir(run_id)
+    previous_confidence = None
+    mcp_calls = []
+    artifact_verification = []
+
     if run_dir:
         state_file = run_dir / "state.json"
         if state_file.exists():
             state = json.loads(state_file.read_text(encoding="utf-8"))
+
+            # 获取上一阶段置信度（用于趋势分析）
+            stage_reports = state.get("stage_reports", [])
+            if stage_reports:
+                previous_confidence = stage_reports[-1].get("confidence_score")
+
+            # 获取 MCP 执行追踪
+            mcp_calls = state.get("mcp_calls", [])
+            # 只返回当前阶段的 MCP 调用
+            current_stage_calls = [c for c in mcp_calls if c.get("stage") == stage_name]
+            if current_stage_calls:
+                mcp_calls = current_stage_calls
+
+            # 记录阶段报告
             if "stage_reports" not in state:
                 state["stage_reports"] = []
             state["stage_reports"].append({
@@ -2797,20 +2827,67 @@ async def _handle_stage_report(arguments: dict) -> list:
             })
             state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
+        # 验证产物存在性
+        for artifact in artifacts:
+            artifact_path = run_dir / artifact
+            exists = artifact_path.exists()
+            artifact_verification.append({
+                "file": artifact,
+                "exists": exists,
+                "status": "通过" if exists else "缺失"
+            })
+
     # 获取应派遣的 Agent
     required_agents = _STAGE_AGENT_RULES.get(stage_name, [])
 
-    # 返回简化状态（详细报告由 agent 在对话中生成）
+    # 计算趋势
+    trend = None
+    if previous_confidence is not None:
+        diff = confidence_score - previous_confidence
+        trend = {
+            "previous": previous_confidence,
+            "current": confidence_score,
+            "diff": round(diff, 2),
+            "direction": "↑" if diff > 0 else "↓" if diff < 0 else "→"
+        }
+
+    # 返回详细状态（支持可视化）
     result = {
         "status": "recorded",
         "stage": stage_name,
         "confidence": confidence_score,
         "required_agents": required_agents,
         "output_required": True,
+        "visualization": {
+            "confidence_bar": _generate_confidence_bar(confidence_score),
+            "confidence_heat": _get_confidence_heat(confidence_score),
+        },
+        "trend": trend,
+        "mcp_calls": mcp_calls,
+        "artifact_verification": artifact_verification,
         "message": f"✅ 阶段报告已记录：{stage_name}，置信度 {confidence_score}/100"
     }
 
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+def _generate_confidence_bar(score: int) -> str:
+    """生成 Unicode 进度条。"""
+    filled = int(score / 10)
+    empty = 10 - filled
+    return "█" * filled + "░" * empty
+
+
+def _get_confidence_heat(score: int) -> str:
+    """获取置信度热力图标记。"""
+    if score >= 90:
+        return "🟩"
+    elif score >= 70:
+        return "🟨"
+    elif score >= 50:
+        return "🟧"
+    else:
+        return "🟥"
 
 
 async def _handle_dispatch_agent(arguments: dict) -> list:

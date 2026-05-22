@@ -220,11 +220,18 @@ reqflow_artifact_check(run_id="<run_id>")
 | 工具 | 参数 | 结果 |
 |------|------|------|
 | reqflow_report | stage="PRD理解" | ✅ |
+| reqflow_stage_report | stage_name="PRD理解" | ✅ |
+| reqflow_dispatch_agent | agent="research-agent" | ✅ |
 
 #### 问题与风险
-- [自修复] xxx
-- [需确认] xxx
-- [阻塞] xxx
+- [自修复] xxx（已自动修复）
+- [需确认] xxx（需要用户确认）
+- [阻塞] xxx（阻塞流程）
+
+#### 反思点
+- 本阶段决策: xxx
+- 潜在改进: xxx
+- 经验教训: xxx
 
 #### 趋势
 置信度趋势: 0.72 → 0.79 (↑0.07)
@@ -232,6 +239,11 @@ reqflow_artifact_check(run_id="<run_id>")
 #### 下一步
 ...
 ```
+
+**置信度可视化说明：**
+- **进度条**: `████████░` 表示 80%，`█████░░░░` 表示 50%
+- **热力图**: 🟩 (≥90%), 🟨 (≥70%), 🟧 (≥50%), 🟥 (<50%)
+- **趋势箭头**: ↑ 提升, ↓ 下降, → 持平
 
 **调用 `reqflow_dispatch_agent` 后必须输出：**
 ```
