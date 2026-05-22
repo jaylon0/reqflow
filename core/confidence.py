@@ -1,4 +1,4 @@
-"""Confidence System V7 — 5维×5档置信度评估与自动路由。"""
+"""Confidence System V7 — 6维×5档置信度评估与自动路由。"""
 
 from __future__ import annotations
 
@@ -57,15 +57,16 @@ Format: confidence=<0-100>, reasoning=<your reasoning>"""
 
 
 class ConfidenceAssessor:
-    """置信度评估器 V7 — 5维×5档。"""
+    """置信度评估器 V7 — 6维×5档。"""
 
-    # 5 维度默认权重
+    # 6 维度默认权重
     DEFAULT_WEIGHTS = {
-        "completeness": 0.20,   # 完整性
-        "consistency": 0.20,    # 一致性
-        "accuracy": 0.20,       # 准确性
-        "testability": 0.20,    # 可测试性
-        "risk_coverage": 0.20,  # 风险覆盖
+        "completeness": 0.17,    # 完整性
+        "consistency": 0.15,     # 一致性
+        "accuracy": 0.18,        # 准确性
+        "testability": 0.15,     # 可测试性
+        "risk_coverage": 0.15,   # 风险覆盖
+        "spec_compliance": 0.20, # Spec合规
     }
 
     # 5 档阈值
@@ -83,17 +84,19 @@ class ConfidenceAssessor:
         accuracy: float = 0.0,
         testability: float = 0.0,
         risk_coverage: float = 0.0,
+        spec_compliance: float = 0.0,
         retry_count: int = 0,
         max_retries: int = 2,
         agent_confidences: list[AgentConfidence] | None = None,
     ) -> ConfidenceResult:
-        """评估置信度（5维×5档）。"""
+        """评估置信度（6维×5档）。"""
         dimensions = [
             DimensionScore("完整性", completeness, self.DEFAULT_WEIGHTS["completeness"]),
             DimensionScore("一致性", consistency, self.DEFAULT_WEIGHTS["consistency"]),
             DimensionScore("准确性", accuracy, self.DEFAULT_WEIGHTS["accuracy"]),
             DimensionScore("可测试性", testability, self.DEFAULT_WEIGHTS["testability"]),
             DimensionScore("风险覆盖", risk_coverage, self.DEFAULT_WEIGHTS["risk_coverage"]),
+            DimensionScore("Spec合规", spec_compliance, self.DEFAULT_WEIGHTS["spec_compliance"]),
         ]
 
         # 加权平均
@@ -135,6 +138,7 @@ class ConfidenceAssessor:
             accuracy=data.get("accuracy", 0.0),
             testability=data.get("testability", 0.0),
             risk_coverage=data.get("risk_coverage", 0.0),
+            spec_compliance=data.get("spec_compliance", 0.0),
             retry_count=data.get("retry_count", 0),
             agent_confidences=data.get("agent_confidences"),
         )
