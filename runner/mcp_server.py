@@ -238,13 +238,14 @@ TOOLS: list[dict] = [
     },
     {
         "name": "reqflow_parallel",
-        "description": "并行 agent 调度。同时执行多个任务。",
+        "description": "记录并行 Agent 派遣元数据，返回派遣指引。宿主 agent 必须使用平台原生机制执行真实派遣。",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "当前阶段"},
                 "agents": {
                     "type": "array",
-                    "description": "Agent 列表，每个包含 name、prompt、handler",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -253,11 +254,7 @@ TOOLS: list[dict] = [
                         },
                         "required": ["name", "prompt"],
                     },
-                },
-                "max_concurrent": {
-                    "type": "integer",
-                    "description": "最大并发数（默认 3）",
-                    "default": 3,
+                    "description": "Agent 列表（name + prompt）",
                 },
             },
             "required": ["agents"],
@@ -1067,37 +1064,51 @@ async def _handle_checkpoint(arguments: dict) -> list:
 
 
 async def _handle_parallel(arguments: dict) -> list:
-    """处理 reqflow_parallel 工具调用。"""
+    """记录并行 Agent 派遣元数据。返回派遣指引，由宿主 agent 执行真实派遣。"""
+    from datetime import datetime as _dt
+
+    run_id = arguments.get("run_id", "")
     agents = arguments.get("agents", [])
+    stage = arguments.get("stage", "")
+
     if not agents:
         return [TextContent(type="text", text="[错误] agents 列表不能为空。")]
 
-    max_concurrent = arguments.get("max_concurrent", 3)
-    semaphore = asyncio.Semaphore(max_concurrent)
-    results = []
+    # Record dispatch metadata in state
+    if run_id:
+        run_path = _resolve_run_dir(run_id)
+        state_path = run_path / "state.json"
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                dispatches = state.setdefault("agent_dispatches", [])
+                dispatch_entry = {
+                    "stage": stage,
+                    "agents": [a.get("name", "unnamed") for a in agents],
+                    "timestamp": _dt.now().isoformat(),
+                    "status": "recorded",
+                }
+                dispatches.append(dispatch_entry)
+                state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+            except Exception:
+                pass
 
-    async def _run_one(agent):
+    # Return dispatch guidance
+    lines = [
+        "=== 并行 Agent 派遣指引 ===",
+        f"阶段: {stage}",
+        f"需派遣 {len(agents)} 个 Agent:",
+        "",
+    ]
+    for i, agent in enumerate(agents, 1):
         name = agent.get("name", "unnamed")
         prompt = agent.get("prompt", "")
-        async with semaphore:
-            try:
-                # In MCP context, we simulate agent execution
-                # Real implementation would call back to the MCP client
-                result = {"name": name, "status": "success", "result": f"Completed: {prompt}"}
-                results.append(result)
-            except Exception as e:
-                results.append({"name": name, "status": "error", "error": str(e)})
+        lines.append(f"  {i}. {name}")
+        lines.append(f"     Prompt: {prompt[:200]}{'...' if len(prompt) > 200 else ''}")
+        lines.append("")
 
-    await asyncio.gather(*[_run_one(a) for a in agents])
-
-    lines = [f"并行执行完成 ({len(results)} 个 agent):"]
-    for r in results:
-        status = r.get("status", "unknown")
-        name = r.get("name", "unnamed")
-        icon = "[OK]" if status == "success" else "[FAIL]"
-        lines.append(f"  {icon} {name}: {status}")
-        if r.get("error"):
-            lines.append(f"      错误: {r['error']}")
+    lines.append("请使用当前平台的原生 subagent 机制派遣以上 Agent。")
+    lines.append("完成后调用 reqflow_report 报告各 Agent 结果。")
 
     return [TextContent(type="text", text="\n".join(lines))]
 
