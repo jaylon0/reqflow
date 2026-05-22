@@ -596,7 +596,7 @@ compliance-report:
     },
     {
         "name": "reqflow_confidence",
-        "description": "评估或查询置信度（V7: 5维度×5档 + 共识度 + 自动路由）",
+        "description": "评估或查询置信度（V7: 6维度×5档 + 共识度 + 自动路由）",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -605,6 +605,7 @@ compliance-report:
                 "accuracy": {"type": "number", "description": "准确性 (0-1)"},
                 "testability": {"type": "number", "description": "可测试性 (0-1)", "default": 0.5},
                 "risk_coverage": {"type": "number", "description": "风险覆盖 (0-1)", "default": 0.5},
+                "spec_compliance": {"type": "number", "description": "Spec合规 (0-1)", "default": 0.5},
                 "retry_count": {"type": "integer", "description": "已重试次数", "default": 0},
                 "agent_confidences": {
                     "type": "array",
@@ -1257,16 +1258,29 @@ async def _handle_health(_arguments: dict) -> list:
 
 
 def _resolve_run_dir(run_id: str, run_dir: str | None = None) -> Path:
-    """解析 run 目录路径。支持 .reqflow/runs/ 和 .dev-workflow/runs/ 两种位置。"""
+    """解析 run 目录路径。支持 .reqflow/runs/、.reqflow/changes/*/runs/、.dev-workflow/runs/。"""
     if run_dir:
         p = Path(run_dir)
         if (p / "state.json").exists():
             return p
+
+    # 1. Legacy flat structure
     for base in (".reqflow/runs", ".dev-workflow/runs"):
         p = Path(base) / run_id
         if (p / "state.json").exists():
             return p
-    # Scan all run dirs for matching internal run_id
+
+    # 2. Change-based structure: .reqflow/changes/*/runs/<run_id>/
+    changes_dir = Path(".reqflow/changes")
+    if changes_dir.exists():
+        for change_dir in changes_dir.iterdir():
+            if not change_dir.is_dir():
+                continue
+            p = change_dir / "runs" / run_id
+            if (p / "state.json").exists():
+                return p
+
+    # 3. Scan legacy dirs for matching internal run_id
     for base in (".reqflow/runs", ".dev-workflow/runs"):
         base_path = Path(base)
         if not base_path.exists():
@@ -1280,6 +1294,26 @@ def _resolve_run_dir(run_id: str, run_dir: str | None = None) -> Path:
                         return d
                 except Exception:
                     continue
+
+    # 4. Scan change-based dirs for matching internal run_id
+    if changes_dir.exists():
+        for change_dir in changes_dir.iterdir():
+            if not change_dir.is_dir():
+                continue
+            runs_dir = change_dir / "runs"
+            if not runs_dir.exists():
+                continue
+            for d in runs_dir.iterdir():
+                sf = d / "state.json"
+                if sf.exists():
+                    try:
+                        data = json.loads(sf.read_text(encoding="utf-8"))
+                        if data.get("run_id") == run_id:
+                            return d
+                    except Exception:
+                        continue
+
+    # 5. Default: create in legacy location
     return Path(f".reqflow/runs/{run_id}")
 
 
@@ -1612,16 +1646,40 @@ async def _handle_report(arguments: dict) -> list:
     state.setdefault("reports", []).append(report_entry)
     state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    # 进度信息
+    stages = state.get("stages", [])
+    stage_index = state.get("current_stage_index", -1)
+    steps_executed = state.get("steps_executed", 0)
+    completed = state.get("completed_modules", [])
+
     lines = [
-        f"阶段报告已记录: {stage}",
+        f"=== 阶段报告: {stage} ===",
         f"状态: {status}",
     ]
+
+    # 阶段进度
+    if stages:
+        total = len(stages)
+        idx_display = stage_index + 1 if stage_index >= 0 else "?"
+        progress_pct = round((idx_display / total) * 100) if isinstance(idx_display, int) else "?"
+        lines.append(f"进度: 阶段 {idx_display}/{total} ({progress_pct}%)")
+        lines.append(f"已执行步骤: {steps_executed}")
+        # 已完成阶段
+        if completed:
+            lines.append(f"已完成阶段 ({len(completed)}): {', '.join(completed)}")
+        # 剩余阶段
+        remaining = [s for s in stages if s not in completed and s != stage]
+        if remaining:
+            lines.append(f"剩余阶段 ({len(remaining)}): {', '.join(remaining)}")
+
     if artifacts:
         lines.append(f"产出: {', '.join(artifacts)}")
     if error:
         lines.append(f"错误: {error}")
     if risks:
-        lines.append(f"残留风险: {', '.join(risks)}")
+        lines.append(f"残留风险 ({len(risks)}):")
+        for r in risks:
+            lines.append(f"  - {r}")
 
     # 下一步指引
     if status == "done":
@@ -1739,6 +1797,14 @@ async def _handle_verify(arguments: dict) -> list:
 
     if result.passed:
         lines.append("\n门禁通过，可以进入下一阶段。")
+        # 输出证据摘要
+        if evidence:
+            lines.append("\n证据摘要:")
+            for k, v in evidence.items():
+                display_v = v if not isinstance(v, str) or len(v) <= 80 else v[:77] + "..."
+                lines.append(f"  {k}: {display_v}")
+        if result.summary:
+            lines.append(f"\n总结: {result.summary}")
     else:
         lines.append("\n门禁未通过，以下项目需要修复:")
         for item in result.blocking_items:
@@ -2320,6 +2386,7 @@ async def _handle_confidence(arguments: dict) -> list:
     accuracy = arguments.get("accuracy", 1.0)
     testability = arguments.get("testability", 0.5)
     risk_coverage = arguments.get("risk_coverage", 0.5)
+    spec_compliance = arguments.get("spec_compliance", 0.5)
     retry_count = arguments.get("retry_count", 0)
     agent_confidences_raw = arguments.get("agent_confidences", [])
 
@@ -2344,6 +2411,7 @@ async def _handle_confidence(arguments: dict) -> list:
         accuracy=accuracy,
         testability=testability,
         risk_coverage=risk_coverage,
+        spec_compliance=spec_compliance,
         retry_count=retry_count,
         agent_confidences=agent_confidences,
     )
