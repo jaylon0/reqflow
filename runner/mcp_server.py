@@ -564,6 +564,21 @@ compliance-report:
         },
     },
     {
+        "name": "reqflow_artifact_register",
+        "description": "注册由宿主 agent 生成的产物文件。记录到 state.json 的 artifacts 列表。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "当前阶段名称"},
+                "path": {"type": "string", "description": "产物文件路径（相对于 run 目录）"},
+                "type": {"type": "string", "enum": ["file", "directory"], "default": "file", "description": "产物类型"},
+                "description": {"type": "string", "description": "产物描述"},
+            },
+            "required": ["run_id", "stage", "path"],
+        },
+    },
+    {
         "name": "reqflow_full_flow",
         "description": "强制全流程入口，跳过路由分析直接使用 L3 管线（11 阶段）",
         "inputSchema": {
@@ -2257,6 +2272,42 @@ async def _handle_acceptance_update(arguments: dict) -> list:
     return [TextContent(type="text", text=f"验收标准 {criteria_id} 已更新为 {new_status}。进度: {verified}/{len(criteria)} verified")]
 
 
+async def _handle_artifact_register(arguments: dict) -> list:
+    """注册由宿主 agent 生成的产物文件到 state.json。"""
+    from datetime import datetime as _dt
+
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+    artifact_path = arguments.get("path", "")
+    artifact_type = arguments.get("type", "file")
+    description = arguments.get("description", "")
+
+    if not run_id or not artifact_path:
+        return [TextContent(type="text", text="[错误] run_id 和 path 不能为空。")]
+
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+
+    if not state_path.exists():
+        return [TextContent(type="text", text=f"[错误] 未找到 run {run_id} 的 state.json。请先调用 reqflow_report 启动阶段。")]
+
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        artifacts = state.setdefault("artifacts", [])
+        artifacts.append({
+            "stage": stage,
+            "path": artifact_path,
+            "type": artifact_type,
+            "description": description,
+            "timestamp": _dt.now().isoformat(),
+        })
+        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+    except Exception as e:
+        return [TextContent(type="text", text=f"[错误] 注册失败: {e}")]
+
+    return [TextContent(type="text", text=f"✅ 已注册产物: {artifact_path} (阶段: {stage})")]
+
+
 async def _handle_multi_repo_switch(arguments: dict) -> list:
     """处理 reqflow_multi_repo_switch 工具调用。"""
     project_dir = arguments.get("project_dir", ".")
@@ -2522,6 +2573,7 @@ TOOL_HANDLERS = {
     "reqflow_blocker_check": _handle_blocker_check,
     "reqflow_multi_repo_switch": _handle_multi_repo_switch,
     "reqflow_acceptance_update": _handle_acceptance_update,
+    "reqflow_artifact_register": _handle_artifact_register,
     # --- V5 新增工具 ---
     "reqflow_full_flow": _handle_full_flow,
     "reqflow_brainstorm": _handle_brainstorm,
