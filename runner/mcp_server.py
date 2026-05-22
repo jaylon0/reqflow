@@ -238,13 +238,14 @@ TOOLS: list[dict] = [
     },
     {
         "name": "reqflow_parallel",
-        "description": "并行 agent 调度。同时执行多个任务。",
+        "description": "记录并行 Agent 派遣元数据，返回派遣指引。宿主 agent 必须使用平台原生机制执行真实派遣。",
         "inputSchema": {
             "type": "object",
             "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "当前阶段"},
                 "agents": {
                     "type": "array",
-                    "description": "Agent 列表，每个包含 name、prompt、handler",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -253,11 +254,7 @@ TOOLS: list[dict] = [
                         },
                         "required": ["name", "prompt"],
                     },
-                },
-                "max_concurrent": {
-                    "type": "integer",
-                    "description": "最大并发数（默认 3）",
-                    "default": 3,
+                    "description": "Agent 列表（name + prompt）",
                 },
             },
             "required": ["agents"],
@@ -366,7 +363,33 @@ TOOLS: list[dict] = [
     },
     {
         "name": "reqflow_verify",
-        "description": "请求门禁验证。质量门禁检查。",
+        "description": """验证质量门禁。
+
+gate 可选值及 evidence schema:
+
+design-gate:
+  meta_spec: str (truthy) - Meta Spec 路径
+  feature_spec: str (truthy) - Feature Spec 路径
+  tech_plan_stages: int >= 2 - 技术方案阶段数
+  completeness_checked: bool - 是否完成完备性检查
+
+tdd-gate:
+  failing_tests_count: int > 0 - 失败测试数量（必须 > 0）
+  test_plan: bool (truthy) - 测试计划是否存在
+
+completion-gate:
+  build_success: bool - 构建是否成功
+  tests_passing: bool - 测试是否全部通过
+  spec_compliant: bool - 是否通过 Spec 合规审查
+  completed_items: int - 已完成工作项数
+  total_items: int - 总工作项数
+
+compliance-report:
+  verification_evidence: str (truthy) - 验证证据
+  review_evidence: str (truthy) - 审查证据
+  test_evidence: str (truthy) - 测试证据
+
+若字段名或类型不匹配，返回精确错误信息。""",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -541,6 +564,33 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "reqflow_artifact_register",
+        "description": "注册由宿主 agent 生成的产物文件。记录到 state.json 的 artifacts 列表。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "当前阶段名称"},
+                "path": {"type": "string", "description": "产物文件路径（相对于 run 目录）"},
+                "type": {"type": "string", "enum": ["file", "directory"], "default": "file", "description": "产物类型"},
+                "description": {"type": "string", "description": "产物描述"},
+            },
+            "required": ["run_id", "stage", "path"],
+        },
+    },
+    {
+        "name": "reqflow_artifact_check",
+        "description": "检查阶段产物完整性。对比 L3 预期产物清单和实际文件。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "检查指定阶段（空=检查全部）"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
         "name": "reqflow_full_flow",
         "description": "强制全流程入口，跳过路由分析直接使用 L3 管线（11 阶段）",
         "inputSchema": {
@@ -548,29 +598,29 @@ TOOLS: list[dict] = [
             "properties": {
                 "requirement": {"type": "string", "description": "需求描述"},
                 "change_name": {"type": "string", "description": "变更名称（可选）"},
-                "auto_pilot": {"type": "boolean", "description": "自动模式：跳过所有中间确认，直接跑到归档", "default": False},
+                "auto_pilot": {"type": "boolean", "description": "自动模式：跳过所有中间阶段确认，仅在最终验收时停止等待用户。所有阶段仍完整执行，只是不等待用户逐阶段确认。", "default": False},
             },
             "required": ["requirement"],
         },
     },
     {
         "name": "reqflow_brainstorm",
-        "description": "触发多 Agent 头脑风暴（round-robin/panel-of-experts/adversarial-debate/critique-refine/structured-debate）",
+        "description": "返回 Agent 角色定义和头脑风暴指引。宿主 agent 必须逐个派遣 Agent 执行真实分析。",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "mode": {"type": "string", "enum": ["round-robin", "panel-of-experts", "adversarial-debate", "critique-refine", "structured-debate"], "description": "头脑风暴模式"},
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "mode": {"type": "string", "enum": ["round-robin", "panel-of-experts", "adversarial-debate", "critique-refine"], "default": "round-robin"},
                 "agents": {"type": "array", "items": {"type": "string"}, "description": "参与 agent 列表"},
                 "topic": {"type": "string", "description": "讨论主题"},
-                "context": {"type": "string", "description": "上下文信息"},
-                "max_rounds": {"type": "integer", "description": "最大轮次", "default": 3},
+                "context": {"type": "string", "description": "讨论上下文"},
             },
             "required": ["mode", "agents", "topic", "context"],
         },
     },
     {
         "name": "reqflow_confidence",
-        "description": "评估或查询置信度（V7: 5维度×5档 + 共识度 + 自动路由）",
+        "description": "评估或查询置信度（V7: 6维度×5档 + 共识度 + 自动路由）",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -579,6 +629,7 @@ TOOLS: list[dict] = [
                 "accuracy": {"type": "number", "description": "准确性 (0-1)"},
                 "testability": {"type": "number", "description": "可测试性 (0-1)", "default": 0.5},
                 "risk_coverage": {"type": "number", "description": "风险覆盖 (0-1)", "default": 0.5},
+                "spec_compliance": {"type": "number", "description": "Spec合规 (0-1)", "default": 0.5},
                 "retry_count": {"type": "integer", "description": "已重试次数", "default": 0},
                 "agent_confidences": {
                     "type": "array",
@@ -595,6 +646,102 @@ TOOLS: list[dict] = [
                 },
             },
             "required": ["completeness", "consistency", "accuracy"],
+        },
+    },
+    {
+        "name": "reqflow_stage_report",
+        "description": "⛔ 内部状态工具。返回值仅供 agent 内部使用，不得直接展示给用户。Agent 必须根据输入参数在对话中生成完整阶段报告（含置信度、Agent 共识、MCP 追踪等）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage_name": {"type": "string", "description": "阶段名称"},
+                "completed_items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "已完成项列表",
+                },
+                "risk_items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "风险项列表",
+                },
+                "confidence_score": {
+                    "type": "number",
+                    "description": "置信度分数 (0-100)",
+                    "minimum": 0,
+                    "maximum": 100,
+                },
+                "next_steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "下一步建议",
+                },
+                "artifacts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "产物清单",
+                },
+            },
+            "required": ["run_id", "stage_name", "completed_items", "confidence_score"],
+        },
+    },
+    {
+        "name": "reqflow_dispatch_agent",
+        "description": "⛔ 内部状态工具。返回值仅供 agent 内部使用，不得直接展示给用户。Agent 必须根据返回的角色定义和 Prompt 模板在对话中生成 Agent 派遣指引。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage_name": {"type": "string", "description": "当前阶段名称"},
+                "agent_role": {
+                    "type": "string",
+                    "enum": [
+                        "research-agent",
+                        "architecture-agent",
+                        "security-agent",
+                        "test-gen-agent",
+                        "doc-agent",
+                        "performance-agent",
+                        "debug-agent",
+                    ],
+                    "description": "Agent 角色",
+                },
+                "task_description": {
+                    "type": "string",
+                    "description": "任务描述",
+                },
+            },
+            "required": ["run_id", "stage_name", "agent_role", "task_description"],
+        },
+    },
+    {
+        "name": "reqflow_acceptance_options",
+        "description": "⛔ 内部状态工具。返回值仅供 agent 内部使用，不得直接展示给用户。Agent 必须根据输入参数在对话中生成完整验收决策面板（含交付物清单、验证结果、4 选项）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "deliverables": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "交付物清单",
+                },
+                "verification_results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "item": {"type": "string"},
+                            "status": {"type": "string", "enum": ["pass", "fail", "warning"]},
+                            "detail": {"type": "string"},
+                        },
+                        "required": ["item", "status"],
+                    },
+                    "description": "验证结果",
+                },
+            },
+            "required": ["run_id", "deliverables"],
         },
     },
 ]
@@ -1040,37 +1187,51 @@ async def _handle_checkpoint(arguments: dict) -> list:
 
 
 async def _handle_parallel(arguments: dict) -> list:
-    """处理 reqflow_parallel 工具调用。"""
+    """记录并行 Agent 派遣元数据。返回派遣指引，由宿主 agent 执行真实派遣。"""
+    from datetime import datetime as _dt
+
+    run_id = arguments.get("run_id", "")
     agents = arguments.get("agents", [])
+    stage = arguments.get("stage", "")
+
     if not agents:
         return [TextContent(type="text", text="[错误] agents 列表不能为空。")]
 
-    max_concurrent = arguments.get("max_concurrent", 3)
-    semaphore = asyncio.Semaphore(max_concurrent)
-    results = []
+    # Record dispatch metadata in state
+    if run_id:
+        run_path = _resolve_run_dir(run_id)
+        state_path = run_path / "state.json"
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                dispatches = state.setdefault("agent_dispatches", [])
+                dispatch_entry = {
+                    "stage": stage,
+                    "agents": [a.get("name", "unnamed") for a in agents],
+                    "timestamp": _dt.now().isoformat(),
+                    "status": "recorded",
+                }
+                dispatches.append(dispatch_entry)
+                state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+            except Exception:
+                pass
 
-    async def _run_one(agent):
+    # Return dispatch guidance
+    lines = [
+        "=== 并行 Agent 派遣指引 ===",
+        f"阶段: {stage}",
+        f"需派遣 {len(agents)} 个 Agent:",
+        "",
+    ]
+    for i, agent in enumerate(agents, 1):
         name = agent.get("name", "unnamed")
         prompt = agent.get("prompt", "")
-        async with semaphore:
-            try:
-                # In MCP context, we simulate agent execution
-                # Real implementation would call back to the MCP client
-                result = {"name": name, "status": "success", "result": f"Completed: {prompt}"}
-                results.append(result)
-            except Exception as e:
-                results.append({"name": name, "status": "error", "error": str(e)})
+        lines.append(f"  {i}. {name}")
+        lines.append(f"     Prompt: {prompt[:200]}{'...' if len(prompt) > 200 else ''}")
+        lines.append("")
 
-    await asyncio.gather(*[_run_one(a) for a in agents])
-
-    lines = [f"并行执行完成 ({len(results)} 个 agent):"]
-    for r in results:
-        status = r.get("status", "unknown")
-        name = r.get("name", "unnamed")
-        icon = "[OK]" if status == "success" else "[FAIL]"
-        lines.append(f"  {icon} {name}: {status}")
-        if r.get("error"):
-            lines.append(f"      错误: {r['error']}")
+    lines.append("请使用当前平台的原生 subagent 机制派遣以上 Agent。")
+    lines.append("完成后调用 reqflow_report 报告各 Agent 结果。")
 
     return [TextContent(type="text", text="\n".join(lines))]
 
@@ -1231,16 +1392,29 @@ async def _handle_health(_arguments: dict) -> list:
 
 
 def _resolve_run_dir(run_id: str, run_dir: str | None = None) -> Path:
-    """解析 run 目录路径。支持 .reqflow/runs/ 和 .dev-workflow/runs/ 两种位置。"""
+    """解析 run 目录路径。支持 .reqflow/runs/、.reqflow/changes/*/runs/、.dev-workflow/runs/。"""
     if run_dir:
         p = Path(run_dir)
         if (p / "state.json").exists():
             return p
+
+    # 1. Legacy flat structure
     for base in (".reqflow/runs", ".dev-workflow/runs"):
         p = Path(base) / run_id
         if (p / "state.json").exists():
             return p
-    # Scan all run dirs for matching internal run_id
+
+    # 2. Change-based structure: .reqflow/changes/*/runs/<run_id>/
+    changes_dir = Path(".reqflow/changes")
+    if changes_dir.exists():
+        for change_dir in changes_dir.iterdir():
+            if not change_dir.is_dir():
+                continue
+            p = change_dir / "runs" / run_id
+            if (p / "state.json").exists():
+                return p
+
+    # 3. Scan legacy dirs for matching internal run_id
     for base in (".reqflow/runs", ".dev-workflow/runs"):
         base_path = Path(base)
         if not base_path.exists():
@@ -1254,6 +1428,26 @@ def _resolve_run_dir(run_id: str, run_dir: str | None = None) -> Path:
                         return d
                 except Exception:
                     continue
+
+    # 4. Scan change-based dirs for matching internal run_id
+    if changes_dir.exists():
+        for change_dir in changes_dir.iterdir():
+            if not change_dir.is_dir():
+                continue
+            runs_dir = change_dir / "runs"
+            if not runs_dir.exists():
+                continue
+            for d in runs_dir.iterdir():
+                sf = d / "state.json"
+                if sf.exists():
+                    try:
+                        data = json.loads(sf.read_text(encoding="utf-8"))
+                        if data.get("run_id") == run_id:
+                            return d
+                    except Exception:
+                        continue
+
+    # 5. Default: create in legacy location
     return Path(f".reqflow/runs/{run_id}")
 
 
@@ -1564,6 +1758,14 @@ async def _handle_report(arguments: dict) -> list:
 
     state["current_stage"] = stage
     state["updated_at"] = _dt.now().isoformat()
+
+    # Update stage index and steps count
+    stages = state.get("stages", [])
+    if stage in stages:
+        idx = stages.index(stage)
+        state["current_stage_index"] = idx
+    state["steps_executed"] = state.get("steps_executed", 0) + 1
+
     if status in ("done", "conditional"):
         state.setdefault("completed_modules", []).append(stage)
     report_entry = {
@@ -1576,18 +1778,54 @@ async def _handle_report(arguments: dict) -> list:
     if risks:
         report_entry["risks"] = risks
     state.setdefault("reports", []).append(report_entry)
+
+    # 记录 MCP 调用追踪
+    if "mcp_calls" not in state:
+        state["mcp_calls"] = []
+    state["mcp_calls"].append({
+        "tool": "reqflow_report",
+        "stage": stage,
+        "params": {"stage": stage, "status": status},
+        "result": "✅",
+        "timestamp": _dt.now().isoformat(),
+    })
+
     state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    # 进度信息
+    stages = state.get("stages", [])
+    stage_index = state.get("current_stage_index", -1)
+    steps_executed = state.get("steps_executed", 0)
+    completed = state.get("completed_modules", [])
+
     lines = [
-        f"阶段报告已记录: {stage}",
+        f"=== 阶段报告: {stage} ===",
         f"状态: {status}",
     ]
+
+    # 阶段进度
+    if stages:
+        total = len(stages)
+        idx_display = stage_index + 1 if stage_index >= 0 else "?"
+        progress_pct = round((idx_display / total) * 100) if isinstance(idx_display, int) else "?"
+        lines.append(f"进度: 阶段 {idx_display}/{total} ({progress_pct}%)")
+        lines.append(f"已执行步骤: {steps_executed}")
+        # 已完成阶段
+        if completed:
+            lines.append(f"已完成阶段 ({len(completed)}): {', '.join(completed)}")
+        # 剩余阶段
+        remaining = [s for s in stages if s not in completed and s != stage]
+        if remaining:
+            lines.append(f"剩余阶段 ({len(remaining)}): {', '.join(remaining)}")
+
     if artifacts:
         lines.append(f"产出: {', '.join(artifacts)}")
     if error:
         lines.append(f"错误: {error}")
     if risks:
-        lines.append(f"残留风险: {', '.join(risks)}")
+        lines.append(f"残留风险 ({len(risks)}):")
+        for r in risks:
+            lines.append(f"  - {r}")
 
     # 下一步指引
     if status == "done":
@@ -1602,6 +1840,59 @@ async def _handle_report(arguments: dict) -> list:
     return [TextContent(type="text", text="\n".join(lines))]
 
 
+_GATE_EVIDENCE_SCHEMAS = {
+    "design-gate": {
+        "meta_spec": {"type": "str", "description": "Meta Spec 路径", "check": lambda v: bool(v)},
+        "feature_spec": {"type": "str", "description": "Feature Spec 路径", "check": lambda v: bool(v)},
+        "tech_plan_stages": {"type": "int >= 2", "description": "技术方案阶段数", "check": lambda v: isinstance(v, int) and v >= 2},
+        "completeness_checked": {"type": "bool", "description": "是否完成完备性检查", "check": lambda v: isinstance(v, bool)},
+    },
+    "tdd-gate": {
+        "failing_tests_count": {"type": "int > 0", "description": "失败测试数量", "check": lambda v: isinstance(v, (int, float)) and v > 0},
+        "test_plan": {"type": "bool (truthy)", "description": "测试计划是否存在", "check": lambda v: bool(v)},
+    },
+    "completion-gate": {
+        "build_success": {"type": "bool", "description": "构建是否成功", "check": lambda v: isinstance(v, bool)},
+        "tests_passing": {"type": "bool", "description": "测试是否全部通过", "check": lambda v: isinstance(v, bool)},
+        "spec_compliant": {"type": "bool", "description": "是否通过 Spec 合规审查", "check": lambda v: isinstance(v, bool)},
+        "completed_items": {"type": "int", "description": "已完成工作项数", "check": lambda v: isinstance(v, int)},
+        "total_items": {"type": "int", "description": "总工作项数", "check": lambda v: isinstance(v, int)},
+    },
+    "compliance-report": {
+        "verification_evidence": {"type": "str (truthy)", "description": "验证证据", "check": lambda v: bool(v)},
+        "review_evidence": {"type": "str (truthy)", "description": "审查证据", "check": lambda v: bool(v)},
+        "test_evidence": {"type": "str (truthy)", "description": "测试证据", "check": lambda v: bool(v)},
+    },
+}
+
+
+def _validate_evidence(gate: str, evidence: dict) -> str | None:
+    """Validate evidence against gate schema. Returns error message or None."""
+    schema = _GATE_EVIDENCE_SCHEMAS.get(gate)
+    if not schema:
+        return None
+
+    missing = []
+    wrong_type = []
+    for field, spec in schema.items():
+        if field not in evidence:
+            missing.append(f"  - {field}: {spec['description']} (要求 {spec['type']})")
+        elif not spec['check'](evidence[field]):
+            wrong_type.append(f"  - {field}: 值 {evidence[field]} 不满足 {spec['type']}")
+
+    if missing or wrong_type:
+        parts = ["门禁未通过:"]
+        if missing:
+            parts.append("缺失字段:")
+            parts.extend(missing)
+        if wrong_type:
+            parts.append("类型错误:")
+            parts.extend(wrong_type)
+        parts.append(f"请修正后重新调用 reqflow_verify(gate=\"{gate}\", evidence={{...}})")
+        return "\n".join(parts)
+    return None
+
+
 async def _handle_verify(arguments: dict) -> list:
     """处理 reqflow_verify 工具调用。门禁验证。"""
     run_id = arguments.get("run_id", "")
@@ -1610,6 +1901,11 @@ async def _handle_verify(arguments: dict) -> list:
 
     if not run_id or not gate:
         return [TextContent(type="text", text="[错误] run_id 和 gate 不能为空。")]
+
+    # Validate evidence against schema
+    validation_error = _validate_evidence(gate, evidence)
+    if validation_error:
+        return [TextContent(type="text", text=validation_error)]
 
     from datetime import datetime as _dt
 
@@ -1647,6 +1943,14 @@ async def _handle_verify(arguments: dict) -> list:
 
     if result.passed:
         lines.append("\n门禁通过，可以进入下一阶段。")
+        # 输出证据摘要
+        if evidence:
+            lines.append("\n证据摘要:")
+            for k, v in evidence.items():
+                display_v = v if not isinstance(v, str) or len(v) <= 80 else v[:77] + "..."
+                lines.append(f"  {k}: {display_v}")
+        if result.summary:
+            lines.append(f"\n总结: {result.summary}")
     else:
         lines.append("\n门禁未通过，以下项目需要修复:")
         for item in result.blocking_items:
@@ -2088,6 +2392,141 @@ async def _handle_acceptance_update(arguments: dict) -> list:
     return [TextContent(type="text", text=f"验收标准 {criteria_id} 已更新为 {new_status}。进度: {verified}/{len(criteria)} verified")]
 
 
+async def _handle_artifact_register(arguments: dict) -> list:
+    """注册由宿主 agent 生成的产物文件到 state.json。"""
+    from datetime import datetime as _dt
+
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+    artifact_path = arguments.get("path", "")
+    artifact_type = arguments.get("type", "file")
+    description = arguments.get("description", "")
+
+    if not run_id or not artifact_path:
+        return [TextContent(type="text", text="[错误] run_id 和 path 不能为空。")]
+
+    run_path = _resolve_run_dir(run_id)
+    state_path = run_path / "state.json"
+
+    if not state_path.exists():
+        return [TextContent(type="text", text=f"[错误] 未找到 run {run_id} 的 state.json。请先调用 reqflow_report 启动阶段。")]
+
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        artifacts = state.setdefault("artifacts", [])
+        artifacts.append({
+            "stage": stage,
+            "path": artifact_path,
+            "type": artifact_type,
+            "description": description,
+            "timestamp": _dt.now().isoformat(),
+        })
+        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+    except Exception as e:
+        return [TextContent(type="text", text=f"[错误] 注册失败: {e}")]
+
+    return [TextContent(type="text", text=f"✅ 已注册产物: {artifact_path} (阶段: {stage})")]
+
+
+# L3 阶段产物定义
+_L3_ARTIFACTS = {
+    "启动": ["state.json", "memory.md"],
+    "PRD理解": ["01_prd_summary.md"],
+    "Spec治理": ["02_spec_delta.md"],
+    "工作流智能": ["03_workflow_intelligence.md", "agent/scenario.json", "agent/work_items.seed.json"],
+    "上下文发现": ["04_context_discovery.md"],
+    "技术方案": ["05_tech_plan.md", "spec.md"],
+    "实施计划": ["06_impl_plan.md", "agent/work_items.seed.json"],
+    "Agent执行": ["07_agent_execution.md", "agent/work_items.json"],
+    "代码审查": ["08_code_review.md"],
+    "交付验证": ["09_verification.md"],
+    "总结": ["summary/summary.md", "summary/metrics.md"],
+    "归档": ["11_archive.md", "acceptance.json"],
+    "_global": ["brainstorming/", "conversation.md"],
+}
+
+
+async def _handle_artifact_check(arguments: dict) -> list:
+    """检查阶段产物完整性。对比预期产物和实际文件。"""
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+
+    if not run_id:
+        return [TextContent(type="text", text="[错误] run_id 不能为空。")]
+
+    run_path = _resolve_run_dir(run_id)
+    if not run_path.exists():
+        return [TextContent(type="text", text=f"[错误] 未找到 run 目录: {run_path}")]
+
+    existing = set()
+    for f in run_path.rglob("*"):
+        if f.is_file():
+            existing.add(str(f.relative_to(run_path)))
+
+    lines = [f"=== 产物完整性检查: {run_id} ===", ""]
+
+    stages_to_check = {stage} if stage else set(_L3_ARTIFACTS.keys()) - {"_global"}
+    total_expected = 0
+    total_found = 0
+
+    for s in sorted(stages_to_check):
+        expected = _L3_ARTIFACTS.get(s, [])
+        if not expected:
+            continue
+        found = []
+        missing = []
+        for art in expected:
+            if art.endswith("/"):
+                dir_prefix = art.rstrip("/")
+                if any(dir_prefix in str(p) for p in existing):
+                    found.append(art)
+                else:
+                    missing.append(art)
+            else:
+                if art in existing:
+                    found.append(art)
+                else:
+                    missing.append(art)
+        total_expected += len(expected)
+        total_found += len(found)
+        if missing:
+            lines.append(f"  [{s}] {len(found)}/{len(expected)} - 缺失: {', '.join(missing)}")
+        else:
+            lines.append(f"  [{s}] {len(found)}/{len(expected)} ✅")
+
+    global_expected = _L3_ARTIFACTS.get("_global", [])
+    if global_expected:
+        global_found = []
+        global_missing = []
+        for art in global_expected:
+            if art.endswith("/"):
+                dir_prefix = art.rstrip("/")
+                if any(dir_prefix in str(p) for p in existing):
+                    global_found.append(art)
+                else:
+                    global_missing.append(art)
+            else:
+                if art in existing:
+                    global_found.append(art)
+                else:
+                    global_missing.append(art)
+        total_expected += len(global_expected)
+        total_found += len(global_found)
+        lines.append("")
+        if global_missing:
+            lines.append(f"  [全局] {len(global_found)}/{len(global_expected)} - 缺失: {', '.join(global_missing)}")
+        else:
+            lines.append(f"  [全局] {len(global_found)}/{len(global_expected)} ✅")
+
+    lines.insert(1, f"总计: {total_found}/{total_expected} 产物已生成")
+
+    if total_found < total_expected:
+        lines.append("")
+        lines.append("请补充缺失产物后重新检查。")
+
+    return [TextContent(type="text", text="\n".join(lines))]
+
+
 async def _handle_multi_repo_switch(arguments: dict) -> list:
     """处理 reqflow_multi_repo_switch 工具调用。"""
     project_dir = arguments.get("project_dir", ".")
@@ -2183,41 +2622,93 @@ async def _handle_full_flow(arguments: dict) -> list:
         "change_dir": change.path,
         "routing_level": "delivery_loop",
         "auto_pilot": auto_pilot,
+        "mode": "auto_pilot — 跳过中间确认，仅验收时停止" if auto_pilot else "standard — 每阶段停止等待确认",
         "stages_count": len(skill.stages),
         "exec_skill_path": skill_path,
     }, ensure_ascii=False, indent=2))]
 
 
 async def _handle_brainstorm(arguments: dict) -> list:
-    """触发多 Agent 头脑风暴。"""
+    """返回 Agent 角色定义和派遣指引。由宿主 agent 执行真实多 Agent 头脑风暴。"""
+    from datetime import datetime as _dt
+
     mode = arguments.get("mode", "round-robin")
     agents = arguments.get("agents", [])
     topic = arguments.get("topic", "")
     context = arguments.get("context", "")
-    max_rounds = arguments.get("max_rounds", 3)
+    run_id = arguments.get("run_id", "")
 
-    from reqflow.core.agent_coordinator import AgentCoordinator, BrainstormMode
-    coord = AgentCoordinator()
+    # Record brainstorm config in state
+    if run_id:
+        run_path = _resolve_run_dir(run_id)
+        state_path = run_path / "state.json"
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                brainstorms = state.setdefault("brainstorms", [])
+                brainstorms.append({
+                    "topic": topic,
+                    "mode": mode,
+                    "agents": agents,
+                    "timestamp": _dt.now().isoformat(),
+                })
+                state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+            except Exception:
+                pass
+
+    # Load agent role definitions
     try:
-        brainstorm_mode = BrainstormMode(mode)
-    except ValueError:
-        brainstorm_mode = BrainstormMode.ROUND_ROBIN
+        from reqflow.core.skill_generator import _AGENT_ROLES
+    except ImportError:
+        _AGENT_ROLES = {}
 
-    result = coord.brainstorm(
-        mode=brainstorm_mode,
-        agents=agents,
-        topic=topic,
-        context=context,
-        max_rounds=max_rounds,
-    )
+    leader_roles = {
+        "PRD理解": "需求审查官",
+        "Spec治理": "规格审计员",
+        "工作流智能": "流程架构师",
+        "上下文发现": "上下文裁判",
+        "技术方案": "技术决策者",
+        "实施计划": "任务分解官",
+        "Agent执行": "质量门禁官",
+        "代码审查": "审查综合者",
+        "交付验证": "最终裁决者",
+        "总结": "复盘主持人",
+    }
 
-    return [TextContent(type="text", text=json.dumps({
-        "mode": result.mode.value,
-        "rounds_count": len(result.rounds),
-        "consensus": result.consensus,
-        "summary": result.summary,
-        "fallback": result.fallback,
-    }, ensure_ascii=False, indent=2))]
+    leader_role = leader_roles.get(topic, "")
+    all_agents = (["leader-agent"] if leader_role else []) + agents
+
+    lines = [
+        f"=== 头脑风暴配置: {topic} ===",
+        f"模式: {mode}",
+        f"上下文: {context[:200]}",
+        "",
+        "参与 Agent 角色表:",
+        "",
+        "| Agent | 角色 | 职责 |",
+        "|-------|------|------|",
+    ]
+
+    if leader_role:
+        lines.append(f"| leader-agent | 统筹协调 | {leader_role}：路由、派遣、聚合、裁决 |")
+    for agent_name in agents:
+        info = _AGENT_ROLES.get(agent_name, {})
+        role = info.get("role", "通用")
+        resp = info.get("responsibility", "通用任务")
+        lines.append(f"| {agent_name} | {role} | {resp} |")
+
+    lines.extend([
+        "",
+        "请按以下步骤执行多 Agent 头脑风暴:",
+        "1. 展示上方角色表给用户",
+        "2. 逐个派遣 Agent（使用平台原生 subagent 机制）",
+        "3. 每个 Agent 输出: 观点 + 置信度(0-100%) + 理由",
+        "4. 输出共识表",
+        f"5. 记录讨论到 brainstorming/{topic}.md",
+        "6. 调用 reqflow_report 报告完成",
+    ])
+
+    return [TextContent(type="text", text="\n".join(lines))]
 
 
 async def _handle_confidence(arguments: dict) -> list:
@@ -2227,6 +2718,7 @@ async def _handle_confidence(arguments: dict) -> list:
     accuracy = arguments.get("accuracy", 1.0)
     testability = arguments.get("testability", 0.5)
     risk_coverage = arguments.get("risk_coverage", 0.5)
+    spec_compliance = arguments.get("spec_compliance", 0.5)
     retry_count = arguments.get("retry_count", 0)
     agent_confidences_raw = arguments.get("agent_confidences", [])
 
@@ -2251,6 +2743,7 @@ async def _handle_confidence(arguments: dict) -> list:
         accuracy=accuracy,
         testability=testability,
         risk_coverage=risk_coverage,
+        spec_compliance=spec_compliance,
         retry_count=retry_count,
         agent_confidences=agent_confidences,
     )
@@ -2263,6 +2756,304 @@ async def _handle_confidence(arguments: dict) -> list:
         "dimensions": {d.name: round(d.score, 2) for d in result.dimensions},
         "consensus_degree": round(result.consensus_degree, 2),
     }, ensure_ascii=False, indent=2))]
+
+
+# ---------------------------------------------------------------------------
+# V7 新增处理函数
+# ---------------------------------------------------------------------------
+
+
+# 阶段 Agent 派遣规则
+_STAGE_AGENT_RULES: dict[str, list[str]] = {
+    "启动": [],
+    "PRD理解": ["research-agent", "architecture-agent"],
+    "Spec治理": ["security-agent"],
+    "工作流智能": ["research-agent"],
+    "上下文发现": ["research-agent"],
+    "技术方案": ["architecture-agent", "security-agent"],
+    "实施计划": ["test-gen-agent"],
+    "Agent执行": [],  # 动态派遣
+    "代码审查": ["security-agent", "performance-agent"],
+    "交付验证": ["test-gen-agent"],
+    "总结": ["doc-agent"],
+    "归档": [],
+}
+
+
+async def _handle_stage_report(arguments: dict) -> list:
+    """生成结构化阶段报告。"""
+    run_id = arguments.get("run_id", "")
+    stage_name = arguments.get("stage_name", "")
+    completed_items = arguments.get("completed_items", [])
+    risk_items = arguments.get("risk_items", [])
+    confidence_score = arguments.get("confidence_score", 0)
+    next_steps = arguments.get("next_steps", [])
+    artifacts = arguments.get("artifacts", [])
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    previous_confidence = None
+    mcp_calls = []
+    artifact_verification = []
+
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+
+            # 获取上一阶段置信度（用于趋势分析）
+            stage_reports = state.get("stage_reports", [])
+            if stage_reports:
+                previous_confidence = stage_reports[-1].get("confidence_score")
+
+            # 获取 MCP 执行追踪
+            mcp_calls = state.get("mcp_calls", [])
+            # 只返回当前阶段的 MCP 调用
+            current_stage_calls = [c for c in mcp_calls if c.get("stage") == stage_name]
+            if current_stage_calls:
+                mcp_calls = current_stage_calls
+
+            # 记录阶段报告
+            if "stage_reports" not in state:
+                state["stage_reports"] = []
+            state["stage_reports"].append({
+                "stage": stage_name,
+                "completed_items": completed_items,
+                "risk_items": risk_items,
+                "confidence_score": confidence_score,
+                "next_steps": next_steps,
+                "artifacts": artifacts,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            })
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # 验证产物存在性
+        for artifact in artifacts:
+            artifact_path = run_dir / artifact
+            exists = artifact_path.exists()
+            artifact_verification.append({
+                "file": artifact,
+                "exists": exists,
+                "status": "通过" if exists else "缺失"
+            })
+
+    # 获取应派遣的 Agent
+    required_agents = _STAGE_AGENT_RULES.get(stage_name, [])
+
+    # 计算趋势
+    trend = None
+    if previous_confidence is not None:
+        diff = confidence_score - previous_confidence
+        trend = {
+            "previous": previous_confidence,
+            "current": confidence_score,
+            "diff": round(diff, 2),
+            "direction": "↑" if diff > 0 else "↓" if diff < 0 else "→"
+        }
+
+    # 返回详细状态（支持可视化）
+    result = {
+        "status": "recorded",
+        "stage": stage_name,
+        "confidence": confidence_score,
+        "required_agents": required_agents,
+        "output_required": True,
+        "visualization": {
+            "confidence_bar": _generate_confidence_bar(confidence_score),
+            "confidence_heat": _get_confidence_heat(confidence_score),
+        },
+        "trend": trend,
+        "mcp_calls": mcp_calls,
+        "artifact_verification": artifact_verification,
+        "message": f"✅ 阶段报告已记录：{stage_name}，置信度 {confidence_score}/100"
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+def _generate_confidence_bar(score: int) -> str:
+    """生成 Unicode 进度条。"""
+    filled = int(score / 10)
+    empty = 10 - filled
+    return "█" * filled + "░" * empty
+
+
+def _get_confidence_heat(score: int) -> str:
+    """获取置信度热力图标记。"""
+    if score >= 90:
+        return "🟩"
+    elif score >= 70:
+        return "🟨"
+    elif score >= 50:
+        return "🟧"
+    else:
+        return "🟥"
+
+
+async def _handle_dispatch_agent(arguments: dict) -> list:
+    """记录并验证 Agent 派遣。"""
+    run_id = arguments.get("run_id", "")
+    stage_name = arguments.get("stage_name", "")
+    agent_role = arguments.get("agent_role", "")
+    task_description = arguments.get("task_description", "")
+
+    # 验证 Agent 是否在当前阶段的规则中
+    required_agents = _STAGE_AGENT_RULES.get(stage_name, [])
+    is_required = agent_role in required_agents
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            if "agent_dispatches" not in state:
+                state["agent_dispatches"] = []
+            state["agent_dispatches"].append({
+                "stage": stage_name,
+                "agent_role": agent_role,
+                "task_description": task_description,
+                "is_required": is_required,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            })
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 生成 Agent 角色定义
+    agent_definitions = {
+        "research-agent": {
+            "name": "Research Agent",
+            "role": "研究分析专家",
+            "capabilities": ["需求分析", "技术调研", "竞品分析", "风险评估"],
+            "prompt_template": "作为研究分析专家，请对以下任务进行深入分析：\n\n{task}\n\n请提供：\n1. 关键发现\n2. 风险点\n3. 建议方案",
+        },
+        "architecture-agent": {
+            "name": "Architecture Agent",
+            "role": "架构设计专家",
+            "capabilities": ["系统设计", "架构评审", "技术选型", "接口设计"],
+            "prompt_template": "作为架构设计专家，请对以下任务进行架构分析：\n\n{task}\n\n请提供：\n1. 架构方案\n2. 设计决策\n3. 技术权衡",
+        },
+        "security-agent": {
+            "name": "Security Agent",
+            "role": "安全审查专家",
+            "capabilities": ["安全审计", "漏洞扫描", "权限检查", "数据安全"],
+            "prompt_template": "作为安全审查专家，请对以下任务进行安全分析：\n\n{task}\n\n请提供：\n1. 安全风险\n2. 漏洞点\n3. 修复建议",
+        },
+        "test-gen-agent": {
+            "name": "Test Generation Agent",
+            "role": "测试生成专家",
+            "capabilities": ["测试用例生成", "测试策略", "边界分析", "覆盖率优化"],
+            "prompt_template": "作为测试生成专家，请为以下任务生成测试方案：\n\n{task}\n\n请提供：\n1. 测试用例\n2. 边界条件\n3. 预期结果",
+        },
+        "doc-agent": {
+            "name": "Documentation Agent",
+            "role": "文档生成专家",
+            "capabilities": ["文档编写", "API 文档", "用户手册", "变更日志"],
+            "prompt_template": "作为文档生成专家，请为以下任务生成文档：\n\n{task}\n\n请提供：\n1. 文档结构\n2. 关键内容\n3. 示例代码",
+        },
+        "performance-agent": {
+            "name": "Performance Agent",
+            "role": "性能优化专家",
+            "capabilities": ["性能分析", "瓶颈定位", "优化建议", "资源监控"],
+            "prompt_template": "作为性能优化专家，请对以下任务进行性能分析：\n\n{task}\n\n请提供：\n1. 性能瓶颈\n2. 优化方案\n3. 监控指标",
+        },
+        "debug-agent": {
+            "name": "Debug Agent",
+            "role": "调试专家",
+            "capabilities": ["问题定位", "日志分析", "根因分析", "修复方案"],
+            "prompt_template": "作为调试专家，请对以下任务进行调试分析：\n\n{task}\n\n请提供：\n1. 问题定位\n2. 根因分析\n3. 修复方案",
+        },
+    }
+
+    agent_def = agent_definitions.get(agent_role, {})
+    guidance = f"""
+## 🤖 Agent 派遣：{agent_role}
+
+### 角色定义
+- **名称**: {agent_def.get('name', agent_role)}
+- **角色**: {agent_def.get('role', '未知')}
+- **能力**: {', '.join(agent_def.get('capabilities', []))}
+
+### 任务描述
+{task_description}
+
+### 派遣指引
+⛔ **必须** 使用平台的 subagent 能力派遣此 Agent：
+
+**Claude Code**: 使用 `Agent` tool
+**Codex**: 使用 subagent workflows
+**Cursor**: 使用 cloud agents
+
+### Prompt 模板
+```
+{agent_def.get('prompt_template', '').format(task=task_description)}
+```
+
+### 验证
+- 当前阶段: {stage_name}
+- 是否必须派遣: {'✅ 是' if is_required else '⚠️ 否（可选）'}
+"""
+
+    # 检查是否还有其他必须派遣的 Agent
+    missing_agents = []
+    if required_agents:
+        dispatched_file = run_dir / "state.json" if run_dir else None
+        dispatched_agents = []
+        if dispatched_file and dispatched_file.exists():
+            state = json.loads(dispatched_file.read_text(encoding="utf-8"))
+            dispatched_agents = [d["agent_role"] for d in state.get("agent_dispatches", []) if d["stage"] == stage_name]
+
+        missing_agents = [a for a in required_agents if a not in dispatched_agents]
+
+    # 返回简化状态（详细指引由 agent 在对话中生成）
+    result = {
+        "status": "dispatched",
+        "stage": stage_name,
+        "agent": agent_role,
+        "is_required": is_required,
+        "missing_agents": missing_agents,
+        "output_required": True,
+        "message": f"✅ Agent 派遣已记录：{agent_role}" + (f"，还有 {len(missing_agents)} 个必须 Agent 未派遣" if missing_agents else "")
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+async def _handle_acceptance_options(arguments: dict) -> list:
+    """生成验收选项。"""
+    run_id = arguments.get("run_id", "")
+    deliverables = arguments.get("deliverables", [])
+    verification_results = arguments.get("verification_results", [])
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            state["acceptance_options"] = {
+                "deliverables": deliverables,
+                "verification_results": verification_results,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            }
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 统计验证结果
+    pass_count = sum(1 for r in verification_results if r.get("status") == "pass")
+    fail_count = sum(1 for r in verification_results if r.get("status") == "fail")
+    warning_count = sum(1 for r in verification_results if r.get("status") == "warning")
+
+    # 返回简化状态（详细验收面板由 agent 在对话中生成）
+    result = {
+        "status": "ready",
+        "deliverables_count": len(deliverables),
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "warning_count": warning_count,
+        "output_required": True,
+        "message": f"✅ 验收选项已准备：{len(deliverables)} 个交付物，{pass_count} 通过，{fail_count} 失败，{warning_count} 警告"
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
 # ---------------------------------------------------------------------------
@@ -2299,10 +3090,16 @@ TOOL_HANDLERS = {
     "reqflow_blocker_check": _handle_blocker_check,
     "reqflow_multi_repo_switch": _handle_multi_repo_switch,
     "reqflow_acceptance_update": _handle_acceptance_update,
+    "reqflow_artifact_register": _handle_artifact_register,
+    "reqflow_artifact_check": _handle_artifact_check,
     # --- V5 新增工具 ---
     "reqflow_full_flow": _handle_full_flow,
     "reqflow_brainstorm": _handle_brainstorm,
     "reqflow_confidence": _handle_confidence,
+    # --- V7 新增工具 ---
+    "reqflow_stage_report": _handle_stage_report,
+    "reqflow_dispatch_agent": _handle_dispatch_agent,
+    "reqflow_acceptance_options": _handle_acceptance_options,
 }
 
 

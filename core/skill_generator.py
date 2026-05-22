@@ -116,8 +116,8 @@ def generate_execution_skill(
     stages = _STAGE_TEMPLATES.get(routing.level, _STAGE_TEMPLATES[RoutingLevel.L2])
 
     sections = []
-    sections.append(_generate_header(run_id, requirement, routing))
-    sections.append(_generate_global_constraints(routing))
+    sections.append(_generate_header(run_id, requirement, routing, auto_pilot=auto_pilot))
+    sections.append(_generate_global_constraints(routing, auto_pilot=auto_pilot))
     sections.append(_generate_mcp_guide())
 
     for i, stage in enumerate(stages, 1):
@@ -145,13 +145,16 @@ def _generate_header(
     run_id: str,
     requirement: str,
     routing: RoutingDecision,
+    auto_pilot: bool = False,
 ) -> str:
     """生成 Execution Skill 头部。"""
+    mode_line = "**模式:** 自动模式（auto_pilot）— 跳过中间确认，仅验收时停止" if auto_pilot else "**模式:** 标准模式 — 每阶段停止等待确认"
     return f"""---
 name: exec-{run_id}
 description: 执行技能 — {requirement[:50]}
 routing_level: {routing.level.value}
 entry_point: prd
+auto_pilot: {str(auto_pilot).lower()}
 ---
 
 # Execution Skill: {requirement[:80]}
@@ -159,11 +162,16 @@ entry_point: prd
 **运行 ID:** {run_id}
 **路由级别:** {routing.level.value} — {routing.reason}
 **置信度:** {routing.confidence:.0%}
-**信号:** {', '.join(routing.signals) if routing.signals else '无'}"""
+**信号:** {', '.join(routing.signals) if routing.signals else '无'}
+{mode_line}"""
 
 
-def _generate_global_constraints(routing: RoutingDecision) -> str:
+def _generate_global_constraints(routing: RoutingDecision, auto_pilot: bool = False) -> str:
     """生成全局约束。"""
+    if auto_pilot:
+        confirmation_rule = "4. **仅验收时停止** — 自动模式下中间阶段自动继续，所有阶段完成后停止等待用户验收"
+    else:
+        confirmation_rule = "4. **每阶段停止确认** — 每个阶段完成后必须停止，等待用户确认后才进入下一阶段"
     constraints = [
         "## 全局约束",
         "",
@@ -172,7 +180,7 @@ def _generate_global_constraints(routing: RoutingDecision) -> str:
         "1. **必须执行所有阶段** — 按顺序执行本文件定义的每一个阶段，不得跳过、不得提前结束",
         "2. **每阶段必须报告** — 每个阶段完成后必须调用 `reqflow_report` 报告状态",
         "3. **门禁必须验证** — 指定的门禁检查点必须调用 `reqflow_verify`，未通过则修复后重新验证",
-        "4. **必须等待用户验收** — 所有阶段完成后必须停止，等待用户调用 `reqflow_accept` 或 `reqflow_reject`",
+        confirmation_rule,
         "5. **不得自行验收** — 只有用户才能决定是否通过，Agent 不得自行调用 `reqflow_accept`",
         "",
         "### ⛔ V7 多 Agent 协作协议（强制）",
@@ -191,6 +199,25 @@ def _generate_global_constraints(routing: RoutingDecision) -> str:
         f"{_LEADER_DECISION_PRINCIPLES}",
         "",
         f"{_DEGRADATION_MATRIX}",
+        "",
+        "",
+        "### ⛔ MCP 即时输出规则（强制）",
+        "",
+        "每次调用 MCP 工具后，必须立即在对话中输出：",
+        "",
+        "1. **工具名 + 输入参数摘要**（一行，emoji 前缀 📡）",
+        "2. **返回结果摘要**（一行，用 ✅/❌ 标记成功/失败）",
+        "3. **失败时必须输出失败原因和修复计划**",
+        "",
+        "格式示例：",
+        "  📡 reqflow_report(stage=\"PRD理解\") → ✅ 已记录",
+        "  📡 reqflow_verify(gate=\"tdd-gate\") → ❌ 未通过: failing_tests_count 缺失",
+        "  🔧 修复计划: 编写失败测试后重新提交",
+        "",
+        "⛔ 禁止：",
+        "- 静默调用 MCP 工具不输出",
+        "- 批量调用后统一输出",
+        "- 只输出成功，隐藏失败",
         "",
         "### 代码与工程约束",
         "",
@@ -592,13 +619,94 @@ def _generate_standard_actions(stage_name: str, routing: RoutingDecision, auto_p
         "",
     ])
 
-    # 阶段确认
     lines.extend([
-        "#### 8. 阶段确认" + ("（⛔ 硬停止点）" if not auto_pilot else "（自动模式）"),
         "",
-        "- 调用 `reqflow_report` 报告阶段完成",
-        "- 等待用户确认后进入下一阶段（除非 auto_pilot 模式）",
+        "#### 7a. ⛔ 阶段报告（必须在对话中输出完整报告）",
+        "",
+        "**每个阶段必须输出以下完整报告结构：**",
+        "",
+        "```",
+        "### 📋 阶段报告：{stage_name}",
+        "",
+        "**状态:** ✅ 完成 | ⚠️ 有警告 | ❌ 失败",
+        "**耗时:** {duration}s",
+        "",
+        "#### 产出清单",
+        "| # | 产出 | 类型 | 路径 |",
+        "|---|------|------|------|",
+        "| 1 | ... | 修改/新增 | ... |",
+        "",
+        "#### 置信度",
+        "{置信度报告（6 维度 Unicode 可视化）}",
+        "",
+        "#### Agent 共识",
+        "{多 agent 结果矩阵}",
+        "",
+        "#### MCP 执行追踪",
+        "| # | 时间 | 工具 | 输入摘要 | 结果 | 耗时 |",
+        "|---|------|------|----------|------|------|",
+        "| 1 | ... | reqflow_report | ... | ✅ | 0.1s |",
+        "",
+        "#### 问题与风险",
+        "| # | 级别 | 描述 | 状态 |",
+        "|---|------|------|------|",
+        "| 1 | ⚠️ P1 | ... | 已降级处理 |",
+        "",
+        "#### 趋势",
+        "- 置信度: 87% ↑2 (上阶段 85%)",
+        "- BLOCKER: 0 (不变)",
+        "",
+        "#### 下一步",
+        "- 进入 {next_stage}",
+        "```",
     ])
+
+    # 阶段确认
+    if auto_pilot:
+        lines.extend([
+            "#### 8. 阶段确认（自动模式）",
+            "",
+            "**必须在对话中展示以下确认面板（自动选择第一选项，但仍展示）：**",
+            "",
+            "```",
+            "### 📋 阶段确认：{stage_name}",
+            "",
+            "**本阶段产出:** {summary}",
+            "",
+            "| 选项 | 操作 | 说明 |",
+            "|------|------|------|",
+            "| ✅ **确认通过** | 自动进入下一阶段 | 产出已验证，继续 |",
+            "| 🔄 **重新执行** | 重新运行本阶段 | 发现问题需要修正 |",
+            "| ✏️ **修改需求** | 调整需求后重新分析 | 需求本身有变化 |",
+            "| ⏭ **跳过** | 直接进入下一阶段 | 不推荐，可能遗漏 |",
+            "",
+            "⚡ 自动模式：已选择「确认通过」",
+            "```",
+            "",
+            "- **例外：有 P0 阻塞时必须停止，等待用户决策**",
+        ])
+    else:
+        lines.extend([
+            "#### 8. 阶段确认（⛔ 硬停止点）",
+            "",
+            "**必须在对话中展示以下确认面板，等待用户选择：**",
+            "",
+            "```",
+            "### 📋 阶段确认：{stage_name}",
+            "",
+            "**本阶段产出:** {summary}",
+            "",
+            "| 选项 | 操作 | 说明 |",
+            "|------|------|------|",
+            "| ✅ **确认通过** | 进入下一阶段 | 产出已验证，继续 |",
+            "| 🔄 **重新执行** | 重新运行本阶段 | 发现问题需要修正 |",
+            "| ✏️ **修改需求** | 调整需求后重新分析 | 需求本身有变化 |",
+            "| ⏭ **跳过** | 直接进入下一阶段 | 不推荐，可能遗漏 |",
+            "```",
+            "",
+            "⛔ 停止，等待用户选择后才进入下一阶段。",
+            "- 不得自行跳过确认点",
+        ])
 
     return "\n".join(lines)
 
@@ -1121,6 +1229,21 @@ def _stage_archive(
 - 触发条件：代码变更涉及公共 API
 - 输出：文档更新内容
 
+### 10.4 产物清理
+
+归档阶段执行:
+1. 保留: `.reqflow/changes/{name}/` (交付记录)
+2. 清理: `target/` 编译产物 (自动删除)
+3. 清理: `.reqflow/changes/{name}/runs/{{run_id}}/tmp/` (临时文件)
+
+验收拒绝时:
+- 保留所有中间产物用于调试
+- 询问用户: "是否保留编译产物(target/)用于调试？[Y/n]"
+
+验收通过时:
+- 自动清理编译产物
+- 保留 .reqflow 归档
+
 {_generate_archive_enhancement()}
 
 ### 10.5 演进提案
@@ -1139,7 +1262,7 @@ def _stage_archive(
 
 ### 10.8 报告
 - 调用 `reqflow_report` 报告完成
-- 产出: 10_archive.md"""
+- 产出: 11_archive.md"""
 
 
 def _stage_analysis(
@@ -1592,6 +1715,26 @@ def _stage_delivery_verification(
 - 验证失败时进入 Loop Engine（无次数上限）
 - 修复循环状态机: observe → classify → localize → patch → verify → review → decide
 
+### 9.6 测试执行策略
+
+不得假设测试命令格式。必须按以下顺序探测：
+
+1. **首选:** `mvn -pl {{module}} -am -Dtest={{TestClass}} test`
+   - 成功 → 记录此命令
+   - 失败 "No tests were executed" → 进入步骤 2
+   - 失败 "Could not resolve dependencies" → 补 `-am` 重试
+
+2. **降级:** `mvn -pl {{module}} -am -Dtest={{TestClass}} -DfailIfNoTests=false test`
+   - 检查 Tests run > 0 → 成功
+   - Tests run: 0 → 进入步骤 3
+
+3. **兜底:** `java -cp {{classpath}} org.junit.runner.JUnitCore {{TestClass}}`
+   - 手动构建 classpath: test-classes + classes + 依赖 jar
+   - 成功 → 记录完整 classpath 命令
+
+⚠️ 不得报告"测试通过"除非实际执行了测试且 Tests run > 0
+⚠️ 必须在 evidence 中记录最终使用的测试命令
+
 {_generate_verification_enhancement()}
 
 ### 9.7 报告
@@ -1698,7 +1841,7 @@ def _stage_tech_plan(index, name, routing, structure, context_info, work_items):
 
 ### 3.6 报告
 - 调用 `reqflow_report` 报告完成
-- 产出: 03_tech_plan.md"""
+- 产出: 05_tech_plan.md"""
 
 
 def _stage_coding(index, name, routing, structure, context_info, work_items):
@@ -1883,15 +2026,34 @@ reqflow_dashboard(run_dir=".reqflow/runs/{run_id}")
 - 测试结果摘要
 - 构建结果摘要
 
-### 步骤 3: 告知用户等待验收
+### 步骤 3: 展示验收决策面板
 
-**必须向用户输出以下内容：**
+**必须向用户输出以下完整的验收决策面板：**
 
 ```
-所有阶段已完成，请验收。
+### 🏁 验收决策面板
 
-- 通过验收：调用 reqflow_accept(run_id="{run_id}")
-- 拒绝验收：调用 reqflow_reject(run_id="{run_id}", reason="拒绝原因")
+**当前状态:** 全部阶段完成，等待你的验收决定。
+
+#### 已交付产物清单
+| # | 文件 | 操作 | 验证 |
+|---|------|------|------|
+| {{列出所有产物}} |
+
+#### 质量摘要
+- 综合置信度: {{overall}}%
+- 门禁: {{gate_results}}
+- BLOCKER: P0={{p0_count}}, 全部={{total_count}}
+- Spec Drift: {{drift_count}} 项
+
+#### 请做出决定
+
+| 选项 | 操作 | 后续流程 |
+|------|------|----------|
+| ✅ **通过验收** | 调用 `reqflow_accept(run_id="{run_id}")` | 1. 生成交付报告 2. 归档所有产物 3. 清理临时文件 4. 流程结束 |
+| ❌ **拒绝验收** | 调用 `reqflow_reject(run_id="{run_id}", reason="原因")` | 1. 进入修复循环（最多 3 轮） 2. 重新执行失败阶段 3. 重新提交验收 |
+| 🔧 **部分验收** | 调用 `reqflow_accept(run_id="{run_id}", scope="范围")` | 1. 标记已验收部分 2. 未验收部分进入修复 3. 生成部分交付报告 |
+| ⏸ **暂挂** | 不调用工具 | 1. 保持当前状态 2. 可随时回来继续 3. 不会自动超时 |
 ```
 
 ### 步骤 4: 强制停止
