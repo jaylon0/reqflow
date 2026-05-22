@@ -648,6 +648,102 @@ compliance-report:
             "required": ["completeness", "consistency", "accuracy"],
         },
     },
+    {
+        "name": "reqflow_stage_report",
+        "description": "生成结构化阶段报告。每个阶段完成后必须调用此工具生成详细报告。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage_name": {"type": "string", "description": "阶段名称"},
+                "completed_items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "已完成项列表",
+                },
+                "risk_items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "风险项列表",
+                },
+                "confidence_score": {
+                    "type": "number",
+                    "description": "置信度分数 (0-100)",
+                    "minimum": 0,
+                    "maximum": 100,
+                },
+                "next_steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "下一步建议",
+                },
+                "artifacts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "产物清单",
+                },
+            },
+            "required": ["run_id", "stage_name", "completed_items", "confidence_score"],
+        },
+    },
+    {
+        "name": "reqflow_dispatch_agent",
+        "description": "记录并验证 Agent 派遣。根据阶段自动推荐应派遣的 Agent。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage_name": {"type": "string", "description": "当前阶段名称"},
+                "agent_role": {
+                    "type": "string",
+                    "enum": [
+                        "research-agent",
+                        "architecture-agent",
+                        "security-agent",
+                        "test-gen-agent",
+                        "doc-agent",
+                        "performance-agent",
+                        "debug-agent",
+                    ],
+                    "description": "Agent 角色",
+                },
+                "task_description": {
+                    "type": "string",
+                    "description": "任务描述",
+                },
+            },
+            "required": ["run_id", "stage_name", "agent_role", "task_description"],
+        },
+    },
+    {
+        "name": "reqflow_acceptance_options",
+        "description": "生成验收选项。在交付验证阶段必须调用，提供明确的验收选项。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "deliverables": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "交付物清单",
+                },
+                "verification_results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "item": {"type": "string"},
+                            "status": {"type": "string", "enum": ["pass", "fail", "warning"]},
+                            "detail": {"type": "string"},
+                        },
+                        "required": ["item", "status"],
+                    },
+                    "description": "验证结果",
+                },
+            },
+            "required": ["run_id", "deliverables"],
+        },
+    },
 ]
 
 
@@ -2651,6 +2747,273 @@ async def _handle_confidence(arguments: dict) -> list:
 
 
 # ---------------------------------------------------------------------------
+# V7 新增处理函数
+# ---------------------------------------------------------------------------
+
+
+# 阶段 Agent 派遣规则
+_STAGE_AGENT_RULES: dict[str, list[str]] = {
+    "启动": [],
+    "PRD理解": ["research-agent", "architecture-agent"],
+    "Spec治理": ["security-agent"],
+    "工作流智能": ["research-agent"],
+    "上下文发现": ["research-agent"],
+    "技术方案": ["architecture-agent", "security-agent"],
+    "实施计划": ["test-gen-agent"],
+    "Agent执行": [],  # 动态派遣
+    "代码审查": ["security-agent", "performance-agent"],
+    "交付验证": ["test-gen-agent"],
+    "总结": ["doc-agent"],
+    "归档": [],
+}
+
+
+async def _handle_stage_report(arguments: dict) -> list:
+    """生成结构化阶段报告。"""
+    run_id = arguments.get("run_id", "")
+    stage_name = arguments.get("stage_name", "")
+    completed_items = arguments.get("completed_items", [])
+    risk_items = arguments.get("risk_items", [])
+    confidence_score = arguments.get("confidence_score", 0)
+    next_steps = arguments.get("next_steps", [])
+    artifacts = arguments.get("artifacts", [])
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            if "stage_reports" not in state:
+                state["stage_reports"] = []
+            state["stage_reports"].append({
+                "stage": stage_name,
+                "completed_items": completed_items,
+                "risk_items": risk_items,
+                "confidence_score": confidence_score,
+                "next_steps": next_steps,
+                "artifacts": artifacts,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            })
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 生成格式化报告
+    report = f"""
+## 📋 阶段报告：{stage_name}
+
+### ✅ 已完成项
+{chr(10).join(f"- {item}" for item in completed_items) if completed_items else "- 无"}
+
+### ⚠️ 风险项
+{chr(10).join(f"- {item}" for item in risk_items) if risk_items else "- 无"}
+
+### 📊 置信度：{confidence_score}/100
+
+### 📝 下一步
+{chr(10).join(f"- {step}" for step in next_steps) if next_steps else "- 无"}
+
+### 📁 产物清单
+{chr(10).join(f"- `{artifact}`" for artifact in artifacts) if artifacts else "- 无"}
+"""
+
+    # 获取应派遣的 Agent
+    required_agents = _STAGE_AGENT_RULES.get(stage_name, [])
+    if required_agents:
+        report += f"""
+### 🤖 必须派遣的 Agent
+{chr(10).join(f"- `{agent}`" for agent in required_agents)}
+
+⛔ **必须** 在进入下一阶段前派遣上述 Agent 执行分析。
+"""
+
+    return [TextContent(type="text", text=report.strip())]
+
+
+async def _handle_dispatch_agent(arguments: dict) -> list:
+    """记录并验证 Agent 派遣。"""
+    run_id = arguments.get("run_id", "")
+    stage_name = arguments.get("stage_name", "")
+    agent_role = arguments.get("agent_role", "")
+    task_description = arguments.get("task_description", "")
+
+    # 验证 Agent 是否在当前阶段的规则中
+    required_agents = _STAGE_AGENT_RULES.get(stage_name, [])
+    is_required = agent_role in required_agents
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            if "agent_dispatches" not in state:
+                state["agent_dispatches"] = []
+            state["agent_dispatches"].append({
+                "stage": stage_name,
+                "agent_role": agent_role,
+                "task_description": task_description,
+                "is_required": is_required,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            })
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 生成 Agent 角色定义
+    agent_definitions = {
+        "research-agent": {
+            "name": "Research Agent",
+            "role": "研究分析专家",
+            "capabilities": ["需求分析", "技术调研", "竞品分析", "风险评估"],
+            "prompt_template": "作为研究分析专家，请对以下任务进行深入分析：\n\n{task}\n\n请提供：\n1. 关键发现\n2. 风险点\n3. 建议方案",
+        },
+        "architecture-agent": {
+            "name": "Architecture Agent",
+            "role": "架构设计专家",
+            "capabilities": ["系统设计", "架构评审", "技术选型", "接口设计"],
+            "prompt_template": "作为架构设计专家，请对以下任务进行架构分析：\n\n{task}\n\n请提供：\n1. 架构方案\n2. 设计决策\n3. 技术权衡",
+        },
+        "security-agent": {
+            "name": "Security Agent",
+            "role": "安全审查专家",
+            "capabilities": ["安全审计", "漏洞扫描", "权限检查", "数据安全"],
+            "prompt_template": "作为安全审查专家，请对以下任务进行安全分析：\n\n{task}\n\n请提供：\n1. 安全风险\n2. 漏洞点\n3. 修复建议",
+        },
+        "test-gen-agent": {
+            "name": "Test Generation Agent",
+            "role": "测试生成专家",
+            "capabilities": ["测试用例生成", "测试策略", "边界分析", "覆盖率优化"],
+            "prompt_template": "作为测试生成专家，请为以下任务生成测试方案：\n\n{task}\n\n请提供：\n1. 测试用例\n2. 边界条件\n3. 预期结果",
+        },
+        "doc-agent": {
+            "name": "Documentation Agent",
+            "role": "文档生成专家",
+            "capabilities": ["文档编写", "API 文档", "用户手册", "变更日志"],
+            "prompt_template": "作为文档生成专家，请为以下任务生成文档：\n\n{task}\n\n请提供：\n1. 文档结构\n2. 关键内容\n3. 示例代码",
+        },
+        "performance-agent": {
+            "name": "Performance Agent",
+            "role": "性能优化专家",
+            "capabilities": ["性能分析", "瓶颈定位", "优化建议", "资源监控"],
+            "prompt_template": "作为性能优化专家，请对以下任务进行性能分析：\n\n{task}\n\n请提供：\n1. 性能瓶颈\n2. 优化方案\n3. 监控指标",
+        },
+        "debug-agent": {
+            "name": "Debug Agent",
+            "role": "调试专家",
+            "capabilities": ["问题定位", "日志分析", "根因分析", "修复方案"],
+            "prompt_template": "作为调试专家，请对以下任务进行调试分析：\n\n{task}\n\n请提供：\n1. 问题定位\n2. 根因分析\n3. 修复方案",
+        },
+    }
+
+    agent_def = agent_definitions.get(agent_role, {})
+    guidance = f"""
+## 🤖 Agent 派遣：{agent_role}
+
+### 角色定义
+- **名称**: {agent_def.get('name', agent_role)}
+- **角色**: {agent_def.get('role', '未知')}
+- **能力**: {', '.join(agent_def.get('capabilities', []))}
+
+### 任务描述
+{task_description}
+
+### 派遣指引
+⛔ **必须** 使用平台的 subagent 能力派遣此 Agent：
+
+**Claude Code**: 使用 `Agent` tool
+**Codex**: 使用 subagent workflows
+**Cursor**: 使用 cloud agents
+
+### Prompt 模板
+```
+{agent_def.get('prompt_template', '').format(task=task_description)}
+```
+
+### 验证
+- 当前阶段: {stage_name}
+- 是否必须派遣: {'✅ 是' if is_required else '⚠️ 否（可选）'}
+"""
+
+    # 检查是否还有其他必须派遣的 Agent
+    if required_agents:
+        dispatched_file = run_dir / "state.json" if run_dir else None
+        dispatched_agents = []
+        if dispatched_file and dispatched_file.exists():
+            state = json.loads(dispatched_file.read_text(encoding="utf-8"))
+            dispatched_agents = [d["agent_role"] for d in state.get("agent_dispatches", []) if d["stage"] == stage_name]
+
+        missing_agents = [a for a in required_agents if a not in dispatched_agents]
+        if missing_agents:
+            guidance += f"""
+### ⚠️ 还有未派遣的必须 Agent
+{chr(10).join(f"- `{agent}`" for agent in missing_agents)}
+
+⛔ **必须** 在进入下一阶段前派遣所有必须的 Agent。
+"""
+
+    return [TextContent(type="text", text=guidance.strip())]
+
+
+async def _handle_acceptance_options(arguments: dict) -> list:
+    """生成验收选项。"""
+    run_id = arguments.get("run_id", "")
+    deliverables = arguments.get("deliverables", [])
+    verification_results = arguments.get("verification_results", [])
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            state["acceptance_options"] = {
+                "deliverables": deliverables,
+                "verification_results": verification_results,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            }
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 统计验证结果
+    pass_count = sum(1 for r in verification_results if r.get("status") == "pass")
+    fail_count = sum(1 for r in verification_results if r.get("status") == "fail")
+    warning_count = sum(1 for r in verification_results if r.get("status") == "warning")
+
+    # 生成验收报告
+    report = f"""
+## 🎯 验收选项
+
+### 📦 交付物清单
+{chr(10).join(f"- `{item}`" for item in deliverables) if deliverables else "- 无"}
+
+### ✅ 验证结果
+{chr(10).join(f"- **{r.get('item', '')}**: {'✅ 通过' if r.get('status') == 'pass' else '❌ 失败' if r.get('status') == 'fail' else '⚠️ 警告'} - {r.get('detail', '')}" for r in verification_results) if verification_results else "- 无验证结果"}
+
+### 📊 统计
+- ✅ 通过: {pass_count}
+- ❌ 失败: {fail_count}
+- ⚠️ 警告: {warning_count}
+
+### 🎯 请选择
+
+**1. ✅ 通过验收**
+- 确认交付物符合要求
+- 调用 `reqflow_accept` 完成流程
+
+**2. ❌ 拒绝验收**
+- 说明拒绝原因
+- 调用 `reqflow_reject` 返回修改
+
+**3. ⚠️ 有条件通过**
+- 列出需要修改的项
+- 调用 `reqflow_accept` 并附带修改要求
+
+---
+
+⛔ **必须** 选择上述选项之一，不能跳过验收。
+"""
+
+    return [TextContent(type="text", text=report.strip())]
+
+
+# ---------------------------------------------------------------------------
 # 工具处理器注册表（必须在 create_server 之前定义）
 # ---------------------------------------------------------------------------
 
@@ -2690,6 +3053,10 @@ TOOL_HANDLERS = {
     "reqflow_full_flow": _handle_full_flow,
     "reqflow_brainstorm": _handle_brainstorm,
     "reqflow_confidence": _handle_confidence,
+    # --- V7 新增工具 ---
+    "reqflow_stage_report": _handle_stage_report,
+    "reqflow_dispatch_agent": _handle_dispatch_agent,
+    "reqflow_acceptance_options": _handle_acceptance_options,
 }
 
 
