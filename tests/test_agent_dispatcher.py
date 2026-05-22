@@ -29,7 +29,6 @@ def test_build_prompt():
     prompt = dispatcher.build_prompt(
         agents[0],
         context="测试需求：写一个测试接口",
-        stage_name="PRD理解",
     )
     assert agents[0].role in prompt
     assert "测试需求" in prompt

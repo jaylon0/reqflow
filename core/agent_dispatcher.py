@@ -14,7 +14,6 @@ class AgentRole:
     role: str
     task: str
     required: bool = True
-    description: str = ""
 
 
 # Stage → Agent role matrix
@@ -178,7 +177,7 @@ class AgentDispatcher:
             for a in agents_data
         ]
 
-    def build_prompt(self, agent: AgentRole, context: str, stage_name: str = "") -> str:
+    def build_prompt(self, agent: AgentRole, context: str) -> str:
         """Build a complete prompt for dispatching an agent."""
         template = AGENT_PROMPT_TEMPLATES.get(agent.role, _DEFAULT_PROMPT)
         return template.format(
