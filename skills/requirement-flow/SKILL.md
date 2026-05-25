@@ -243,6 +243,26 @@ reqflow_agent_confirm(
 | 代码审查 | 2 轮 |
 | 交付验证 | 2 轮 |
 
+**讨论必须是真实的多 Agent 协作，不是简单的 MCP 调用标记。**
+
+#### 真实讨论流程
+
+```
+① 观点陈述阶段 (phase="statements")
+   - 派遣各 Agent 独立完成任务
+   - 收集各方结论
+   - 调用 reqflow_discussion_round 记录
+     ↓
+② 交叉评论阶段 (phase="cross_commentary")
+   - 让每位 Agent 评论其他 Agent 的观点
+   - 'A，你怎么看 B 的方案？B，你对 A 的担忧有何回应？'
+   - 调用 reqflow_discussion_round 记录
+     ↓
+③ 共识达成
+   - 分析共识点和分歧点
+   - 调用 reqflow_consensus 记录最终共识
+```
+
 每轮讨论必须调用 `reqflow_discussion_round` 记录：
 
 ```
@@ -250,7 +270,19 @@ reqflow_discussion_round(
     run_id="<run_id>",
     stage="<阶段名称>",
     round=1,
-    agents=["agent1", "agent2"]
+    agents=["research-agent", "architecture-agent"],
+    topic="讨论议题",
+    phase="statements",  # statements / cross_commentary / full
+    points=[
+        {"agent": "research-agent", "point": "研究结论..."},
+        {"agent": "architecture-agent", "point": "架构建议..."}
+    ],
+    cross_comments=[
+        {"reviewer": "research-agent", "target": "architecture-agent", "comment": "对架构方案的看法..."}
+    ],
+    agreements=["共识1"],
+    disagreements=["分歧1"],
+    decision="最终决策"
 )
 ```
 
@@ -299,13 +331,18 @@ reqflow_discussion_round(
 
 ## ⛔ MCP 工具与对话输出分离规则
 
-**核心原则：MCP 返回的 `display` 字段包含格式化内容，必须在对话中展示给用户。**
+**核心原则：MCP 返回的数据是参考信息，宿主 Agent 必须用自己的语言产出详细的真实输出。**
 
 ### 强制约束
 
-1. **MCP 返回的 `display` 字段必须在对话中展示** — `reqflow_stage_report`、`reqflow_dispatch_agent`、`reqflow_acceptance_options` 等工具返回的 JSON 中包含 `display` 字段（含 `title` 和 `content`），Agent 必须将 `display.content` 的内容在对话中输出
-2. **Agent 必须在对话中生成报告** — 根据 MCP 输入参数和返回状态，在对话中输出完整的格式化报告
-3. **MCP 返回值中的 `output_required: true`** — 表示 agent 必须在对话中输出内容
+1. **MCP 返回的 `host_instruction` 字段必须遵循** — 每个 MCP 工具返回的 JSON 中包含 `host_instruction` 字段，明确指示宿主 Agent 必须执行的操作
+2. **宿主 Agent 必须产出真实输出** — 不得直接展示 MCP 返回值，必须用自己的语言详细描述：
+   - Agent 的工作过程和结论
+   - 讨论的交锋过程
+   - 置信度的含义和风险
+   - 下一步行动建议
+3. **使用 Agent 昵称** — MCP 返回的 `agent_nickname` 和 `agent_display_name` 字段提供友好昵称（如"小研"、"架构师"），在对话中必须使用昵称而非原始 agent_role
+4. **MCP 返回值中的 `output_required: true`** — 表示 agent 必须在对话中输出内容
 
 ### 对话输出模板
 
