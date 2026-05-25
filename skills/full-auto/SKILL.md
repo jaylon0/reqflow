@@ -217,13 +217,18 @@ reqflow_debate_conclude(debate_id="<id>")
 
 ## ⛔ MCP 工具与对话输出分离规则
 
-**核心原则：MCP 返回的 `display` 字段包含格式化内容，必须在对话中展示给用户。**
+**核心原则：MCP 返回的数据是参考信息，宿主 Agent 必须用自己的语言产出详细的真实输出。**
 
 ### 强制约束
 
-1. **MCP 返回的 `display` 字段必须在对话中展示** — `reqflow_stage_report`、`reqflow_dispatch_agent`、`reqflow_acceptance_options` 等工具返回的 JSON 中包含 `display` 字段（含 `title` 和 `content`），Agent 必须将 `display.content` 的内容在对话中输出
-2. **Agent 必须在对话中生成报告** — 根据 MCP 输入参数和返回状态，在对话中输出完整的格式化报告
-3. **MCP 返回值中的 `output_required: true`** — 表示 agent 必须在对话中输出内容
+1. **MCP 返回的 `host_instruction` 字段必须遵循** — 每个 MCP 工具返回的 JSON 中包含 `host_instruction` 字段，明确指示宿主 Agent 必须执行的操作
+2. **宿主 Agent 必须产出真实输出** — 不得直接展示 MCP 返回值，必须用自己的语言详细描述：
+   - Agent 的工作过程和结论
+   - 讨论的交锋过程
+   - 置信度的含义和风险
+   - 下一步行动建议
+3. **使用 Agent 昵称** — MCP 返回的 `agent_nickname` 和 `agent_display_name` 字段提供友好昵称（如"小研"、"架构师"），在对话中必须使用昵称而非原始 agent_role
+4. **MCP 返回值中的 `output_required: true`** — 表示 agent 必须在对话中输出内容
 
 ### 对话输出模板
 
