@@ -840,6 +840,33 @@ compliance-report:
             "required": ["run_id", "stage", "rounds", "consensus", "confidence", "dissents"],
         },
     },
+    {
+        "name": "reqflow_cross_validate",
+        "description": "多 Agent 交叉验证。收集多个 Agent 对同一任务的验证结果，计算一致性分数。高一致性 = 高置信度。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "当前阶段名称"},
+                "task_id": {"type": "string", "description": "任务 ID"},
+                "validations": {
+                    "type": "array",
+                    "description": "各 Agent 的验证结果",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "agent": {"type": "string", "description": "Agent 名称"},
+                            "result": {"type": "string", "enum": ["pass", "fail"], "description": "验证结果"},
+                            "confidence": {"type": "number", "description": "Agent 置信度 (0.0-1.0)"},
+                            "detail": {"type": "string", "description": "验证详情"},
+                        },
+                        "required": ["agent", "result", "confidence"],
+                    },
+                },
+            },
+            "required": ["run_id", "stage", "task_id", "validations"],
+        },
+    },
 ]
 
 
@@ -3120,13 +3147,28 @@ async def _handle_stage_report(arguments: dict) -> list:
             "direction": "↑" if diff > 0 else "↓" if diff < 0 else "→"
         }
 
+    # 置信度校准（多因子）
+    calibration = _calibrate_confidence(
+        self_reported_score=confidence_score,
+        agent_status=agent_status,
+        discussion_check=discussion_check,
+        artifact_verification=artifact_verification,
+        previous_confidence=previous_confidence,
+    )
+    calibrated_score = calibration["adjusted_score"]
+
     # 构建 display 字段
-    confidence_bar = _generate_confidence_bar(confidence_score)
-    confidence_heat = _get_confidence_heat(confidence_score)
+    confidence_bar = _generate_confidence_bar(calibrated_score)
+    confidence_heat = _get_confidence_heat(calibrated_score)
     display_lines = [
         f"**阶段:** {stage_name}",
-        f"**置信度:** {confidence_heat} {confidence_bar} {confidence_score}/100",
+        f"**置信度:** {confidence_heat} {confidence_bar} {calibrated_score}/100",
     ]
+    if calibration["has_significant_adjustment"]:
+        display_lines.append(f"**校准调整:** {confidence_score} → {calibrated_score} ({calibration['adjustment']:+d})")
+        display_lines.append(f"**调整原因:**")
+        for factor in calibration["calibration_factors"]:
+            display_lines.append(f"  - {factor['detail']} ({factor['impact']:+d})")
     if trend:
         display_lines.append(f"**趋势:** {trend['direction']} (前值: {trend['previous']})")
     if completed_items:
@@ -3157,7 +3199,9 @@ async def _handle_stage_report(arguments: dict) -> list:
     result = {
         "status": "recorded",
         "stage": stage_name,
-        "confidence": confidence_score,
+        "confidence": calibrated_score,
+        "confidence_original": confidence_score,
+        "confidence_calibration": calibration,
         "required_agents": required_agents,
         "agent_status": agent_status,
         "agent_warnings": agent_warnings,
@@ -3175,7 +3219,7 @@ async def _handle_stage_report(arguments: dict) -> list:
             "title": f"📡 reqflow_stage_report(stage_name=\"{stage_name}\")",
             "content": "\n".join(display_lines),
         },
-        "message": f"✅ 阶段报告已记录：{stage_name}，置信度 {confidence_score}/100" + (f"；Agent 警告: {'; '.join(agent_warnings)}" if agent_warnings else "")
+        "message": f"✅ 阶段报告已记录：{stage_name}，置信度 {calibrated_score}/100 (原始: {confidence_score})" + (f"；Agent 警告: {'; '.join(agent_warnings)}" if agent_warnings else "")
     }
 
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
@@ -3198,6 +3242,142 @@ def _get_confidence_heat(score: int) -> str:
         return "🟧"
     else:
         return "🟥"
+
+
+def _calibrate_confidence(
+    self_reported_score: int,
+    agent_status: dict,
+    discussion_check: dict,
+    artifact_verification: list,
+    previous_confidence: int | None = None,
+    test_coverage: float | None = None,
+    cross_validation_score: float | None = None,
+) -> dict:
+    """
+    多因子置信度校准。
+
+    基于以下因素调整置信度：
+    1. 自报告分数 (基础分)
+    2. Agent 完成状态 (惩罚未完成/失败)
+    3. 讨论轮次 (关键阶段不足 2 轮惩罚)
+    4. 产物完整性 (缺失产物惩罚)
+    5. 测试覆盖率 (可选，覆盖率低惩罚)
+    6. 交叉验证分数 (可选，多 Agent 一致性)
+    7. 趋势 (与上一阶段比较)
+    """
+    calibration_factors = []
+    adjusted_score = self_reported_score
+
+    # 1. Agent 完成状态检查
+    completed_agents = len(agent_status.get("completed", []))
+    pending_agents = len(agent_status.get("pending", []))
+    failed_agents = len(agent_status.get("failed", []))
+    total_agents = completed_agents + pending_agents + failed_agents
+
+    if total_agents > 0:
+        agent_completion_rate = completed_agents / total_agents
+        if agent_completion_rate < 1.0:
+            penalty = int((1.0 - agent_completion_rate) * 15)  # 最多扣 15 分
+            adjusted_score -= penalty
+            calibration_factors.append({
+                "factor": "agent_completion",
+                "impact": -penalty,
+                "detail": f"Agent 完成率 {agent_completion_rate:.0%} ({completed_agents}/{total_agents})",
+            })
+
+    # 2. 讨论轮次检查
+    if discussion_check.get("required") and not discussion_check.get("passed"):
+        penalty = 10
+        adjusted_score -= penalty
+        calibration_factors.append({
+            "factor": "discussion_rounds",
+            "impact": -penalty,
+            "detail": f"关键阶段讨论不足 2 轮 (当前 {discussion_check.get('rounds', 0)} 轮)",
+        })
+
+    # 3. 产物完整性检查
+    missing_artifacts = sum(1 for av in artifact_verification if not av.get("exists"))
+    if missing_artifacts > 0:
+        penalty = missing_artifacts * 5  # 每个缺失产物扣 5 分
+        adjusted_score -= penalty
+        calibration_factors.append({
+            "factor": "artifact_completeness",
+            "impact": -penalty,
+            "detail": f"{missing_artifacts} 个产物缺失",
+        })
+
+    # 4. 测试覆盖率 (可选)
+    if test_coverage is not None:
+        if test_coverage < 0.7:  # 低于 70% 惩罚
+            penalty = int((0.7 - test_coverage) * 20)
+            adjusted_score -= penalty
+            calibration_factors.append({
+                "factor": "test_coverage",
+                "impact": -penalty,
+                "detail": f"测试覆盖率 {test_coverage:.0%} (目标 ≥70%)",
+            })
+        elif test_coverage >= 0.9:  # 高于 90% 奖励
+            bonus = 5
+            adjusted_score += bonus
+            calibration_factors.append({
+                "factor": "test_coverage",
+                "impact": bonus,
+                "detail": f"测试覆盖率 {test_coverage:.0%} (优秀)",
+            })
+
+    # 5. 交叉验证分数 (可选)
+    if cross_validation_score is not None:
+        if cross_validation_score >= 0.8:  # 高一致性奖励
+            bonus = 5
+            adjusted_score += bonus
+            calibration_factors.append({
+                "factor": "cross_validation",
+                "impact": bonus,
+                "detail": f"多 Agent 交叉验证一致性 {cross_validation_score:.0%}",
+            })
+        elif cross_validation_score < 0.5:  # 低一致性惩罚
+            penalty = 10
+            adjusted_score -= penalty
+            calibration_factors.append({
+                "factor": "cross_validation",
+                "impact": -penalty,
+                "detail": f"多 Agent 交叉验证一致性低 {cross_validation_score:.0%}",
+            })
+
+    # 6. 趋势检查
+    trend_adjustment = 0
+    if previous_confidence is not None:
+        diff = adjusted_score - previous_confidence
+        if diff < -20:  # 大幅下降警告
+            trend_adjustment = -5
+            adjusted_score += trend_adjustment
+            calibration_factors.append({
+                "factor": "trend_decline",
+                "impact": trend_adjustment,
+                "detail": f"置信度大幅下降 (前值: {previous_confidence}, 降幅: {abs(diff)})",
+            })
+
+    # 限制范围在 0-100
+    adjusted_score = max(0, min(100, adjusted_score))
+
+    # 计算校准后的置信度等级
+    if adjusted_score >= 90:
+        confidence_level = "high"
+    elif adjusted_score >= 70:
+        confidence_level = "medium"
+    elif adjusted_score >= 50:
+        confidence_level = "low"
+    else:
+        confidence_level = "very_low"
+
+    return {
+        "original_score": self_reported_score,
+        "adjusted_score": adjusted_score,
+        "adjustment": adjusted_score - self_reported_score,
+        "confidence_level": confidence_level,
+        "calibration_factors": calibration_factors,
+        "has_significant_adjustment": abs(adjusted_score - self_reported_score) >= 10,
+    }
 
 
 async def _handle_dispatch_agent(arguments: dict) -> list:
@@ -3660,6 +3840,108 @@ async def _handle_acceptance_options(arguments: dict) -> list:
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
+async def _handle_cross_validate(arguments: dict) -> list:
+    """
+    多 Agent 交叉验证。
+
+    收集多个 Agent 对同一任务的验证结果，计算一致性分数。
+    高一致性 = 高置信度，低一致性 = 需要进一步审查。
+    """
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+    task_id = arguments.get("task_id", "")
+    validations = arguments.get("validations", [])
+
+    # validations 格式: [{"agent": "agent1", "result": "pass/fail", "confidence": 0.9, "detail": "..."}]
+
+    if not validations:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "validations 不能为空",
+            "format": '[{"agent": "agent_name", "result": "pass/fail", "confidence": 0.9, "detail": "..."}]'
+        }, ensure_ascii=False))]
+
+    # 计算一致性
+    results = [v.get("result", "") for v in validations]
+    pass_count = results.count("pass")
+    fail_count = results.count("fail")
+    total = len(validations)
+
+    # 结果一致性 (全部一致 = 1.0, 完全分歧 = 0.0)
+    if pass_count == total or fail_count == total:
+        result_consistency = 1.0
+    else:
+        result_consistency = max(pass_count, fail_count) / total
+
+    # 置信度平均值
+    confidences = [v.get("confidence", 0.5) for v in validations]
+    avg_confidence = sum(confidences) / len(confidences)
+
+    # 综合交叉验证分数 (结果一致性 60% + 平均置信度 40%)
+    cross_validation_score = (result_consistency * 0.6) + (avg_confidence * 0.4)
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            if "cross_validations" not in state:
+                state["cross_validations"] = []
+            state["cross_validations"].append({
+                "stage": stage,
+                "task_id": task_id,
+                "validations": validations,
+                "result_consistency": result_consistency,
+                "avg_confidence": avg_confidence,
+                "cross_validation_score": cross_validation_score,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            })
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 构建 display 字段
+    score_heat = _get_confidence_heat(int(cross_validation_score * 100))
+    score_bar = _generate_confidence_bar(int(cross_validation_score * 100))
+
+    display_lines = [
+        f"**阶段:** {stage}",
+        f"**任务:** {task_id}",
+        f"**验证 Agent 数量:** {total}",
+        f"**结果一致性:** {result_consistency:.0%} ({pass_count} 通过, {fail_count} 失败)",
+        f"**平均置信度:** {avg_confidence:.0%}",
+        f"**交叉验证分数:** {score_heat} {score_bar} {cross_validation_score:.0%}",
+        "",
+        "**各 Agent 验证详情:**",
+    ]
+
+    for v in validations:
+        icon = "✅" if v.get("result") == "pass" else "❌"
+        display_lines.append(f"  - {icon} **{v.get('agent', '?')}**: {v.get('detail', '无详情')} (置信度: {v.get('confidence', 0):.0%})")
+
+    if result_consistency < 1.0:
+        display_lines.append("")
+        display_lines.append("⚠️ **存在分歧，建议进行讨论轮次以达成共识**")
+
+    # 返回结果
+    result = {
+        "status": "recorded",
+        "stage": stage,
+        "task_id": task_id,
+        "total_agents": total,
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "result_consistency": result_consistency,
+        "avg_confidence": avg_confidence,
+        "cross_validation_score": cross_validation_score,
+        "display": {
+            "title": f"🔍 交叉验证：{stage}",
+            "content": "\n".join(display_lines),
+        },
+        "message": f"{'✅' if cross_validation_score >= 0.8 else '⚠️'} 交叉验证完成：一致性 {result_consistency:.0%}，综合分数 {cross_validation_score:.0%}"
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
 # ---------------------------------------------------------------------------
 # 工具处理器注册表（必须在 create_server 之前定义）
 # ---------------------------------------------------------------------------
@@ -3708,6 +3990,8 @@ TOOL_HANDLERS = {
     # --- Skill 模块化重构新增工具 ---
     "reqflow_discussion_round": _handle_discussion_round,
     "reqflow_consensus": _handle_consensus,
+    # --- 置信度提升工具 ---
+    "reqflow_cross_validate": _handle_cross_validate,
 }
 
 
