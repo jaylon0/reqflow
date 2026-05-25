@@ -1,13 +1,16 @@
 """ReqFlow MCP Server - 将 ReqFlow 能力暴露为 MCP 工具。
 
 通过 stdio 传输与 MCP 客户端通信，提供以下工具:
-    reqflow_run           执行 workflow
-    reqflow_status        查询运行状态
-    reqflow_list_runtimes 列出可用 runtime
-    reqflow_checkpoint    管理检查点
-    reqflow_parallel      并行 agent 调度
-    reqflow_trace         执行追踪
-    reqflow_guardrails    约束检查
+    reqflow_run              执行 workflow
+    reqflow_status           查询运行状态
+    reqflow_list_runtimes    列出可用 runtime
+    reqflow_checkpoint       管理检查点
+    reqflow_parallel         并行 agent 调度
+    reqflow_trace            执行追踪
+    reqflow_guardrails       约束检查
+    reqflow_dispatch_agent   派遣 Agent 或 Worker
+    reqflow_discussion_round 记录讨论轮次
+    reqflow_consensus        记录共识结果
 
 注意: ``mcp`` 依赖是可选的。如果未安装，导入时会给出友好提示并退出。
 """
@@ -711,6 +714,16 @@ compliance-report:
                     "type": "string",
                     "description": "任务描述",
                 },
+                "agent_type": {
+                    "type": "string",
+                    "enum": ["agent", "worker"],
+                    "description": "派遣类型：agent 或 worker",
+                    "default": "agent",
+                },
+                "discussion_round": {
+                    "type": "integer",
+                    "description": "关联的讨论轮次（可选）",
+                },
             },
             "required": ["run_id", "stage_name", "agent_role", "task_description"],
         },
@@ -742,6 +755,68 @@ compliance-report:
                 },
             },
             "required": ["run_id", "deliverables"],
+        },
+    },
+    {
+        "name": "reqflow_discussion_round",
+        "description": "记录讨论轮次。用于多 Agent 协作场景，记录每个讨论轮次的参与者和内容。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "当前阶段名称"},
+                "round": {"type": "integer", "description": "讨论轮次编号"},
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "description": "Agent 角色"},
+                            "opinion": {"type": "string", "description": "Agent 意见"},
+                        },
+                        "required": ["role", "opinion"],
+                    },
+                    "description": "参与讨论的 Agent 列表",
+                },
+                "workers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "description": "Worker 角色"},
+                            "contribution": {"type": "string", "description": "Worker 贡献"},
+                        },
+                        "required": ["role", "contribution"],
+                    },
+                    "description": "参与讨论的 Worker 列表",
+                },
+            },
+            "required": ["run_id", "stage", "round", "agents", "workers"],
+        },
+    },
+    {
+        "name": "reqflow_consensus",
+        "description": "记录共识结果。用于记录多轮讨论后达成的共识。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "当前阶段名称"},
+                "rounds": {"type": "integer", "description": "讨论轮次数"},
+                "consensus": {"type": "string", "description": "共识内容"},
+                "confidence": {
+                    "type": "number",
+                    "description": "共识置信度 (0.0-1.0)",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                },
+                "dissents": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "异议列表",
+                },
+            },
+            "required": ["run_id", "stage", "rounds", "consensus", "confidence", "dissents"],
         },
     },
 ]
@@ -2896,6 +2971,8 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
     stage_name = arguments.get("stage_name", "")
     agent_role = arguments.get("agent_role", "")
     task_description = arguments.get("task_description", "")
+    agent_type = arguments.get("agent_type", "agent")
+    discussion_round = arguments.get("discussion_round")
 
     # 验证 Agent 是否在当前阶段的规则中
     required_agents = _STAGE_AGENT_RULES.get(stage_name, [])
@@ -2912,7 +2989,9 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
             state["agent_dispatches"].append({
                 "stage": stage_name,
                 "agent_role": agent_role,
+                "agent_type": agent_type,
                 "task_description": task_description,
+                "discussion_round": discussion_round,
                 "is_required": is_required,
                 "timestamp": __import__("datetime").datetime.now().isoformat(),
             })
@@ -3009,10 +3088,95 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
         "status": "dispatched",
         "stage": stage_name,
         "agent": agent_role,
+        "agent_type": agent_type,
+        "discussion_round": discussion_round,
         "is_required": is_required,
         "missing_agents": missing_agents,
         "output_required": True,
         "message": f"✅ Agent 派遣已记录：{agent_role}" + (f"，还有 {len(missing_agents)} 个必须 Agent 未派遣" if missing_agents else "")
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+async def _handle_discussion_round(arguments: dict) -> list:
+    """记录讨论轮次。"""
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+    round_num = arguments.get("round", 0)
+    agents = arguments.get("agents", [])
+    workers = arguments.get("workers", [])
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            discussion_key = f"discussion_{stage}"
+            if discussion_key not in state:
+                state[discussion_key] = []
+            state[discussion_key].append({
+                "round": round_num,
+                "agents": agents,
+                "workers": workers,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            })
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 返回结果
+    result = {
+        "status": "recorded",
+        "run_id": run_id,
+        "stage": stage,
+        "round": round_num,
+        "agents_count": len(agents),
+        "workers_count": len(workers),
+        "output_required": True,
+        "output_template": "discussion_round",
+        "message": f"✅ 讨论轮次已记录：阶段 {stage}，轮次 {round_num}，{len(agents)} 个 Agent，{len(workers)} 个 Worker"
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+async def _handle_consensus(arguments: dict) -> list:
+    """记录共识结果。"""
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+    rounds = arguments.get("rounds", 0)
+    consensus = arguments.get("consensus", "")
+    confidence = arguments.get("confidence", 0.0)
+    dissents = arguments.get("dissents", [])
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            consensus_key = f"consensus_{stage}"
+            state[consensus_key] = {
+                "rounds": rounds,
+                "consensus": consensus,
+                "confidence": confidence,
+                "dissents": dissents,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            }
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 返回结果
+    result = {
+        "status": "recorded",
+        "run_id": run_id,
+        "stage": stage,
+        "rounds": rounds,
+        "consensus": consensus,
+        "confidence": confidence,
+        "dissents_count": len(dissents),
+        "output_required": True,
+        "output_template": "consensus",
+        "message": f"✅ 共识已记录：阶段 {stage}，{rounds} 轮讨论，置信度 {confidence:.1%}，{len(dissents)} 项异议"
     }
 
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
@@ -3100,6 +3264,9 @@ TOOL_HANDLERS = {
     "reqflow_stage_report": _handle_stage_report,
     "reqflow_dispatch_agent": _handle_dispatch_agent,
     "reqflow_acceptance_options": _handle_acceptance_options,
+    # --- Skill 模块化重构新增工具 ---
+    "reqflow_discussion_round": _handle_discussion_round,
+    "reqflow_consensus": _handle_consensus,
 }
 
 
