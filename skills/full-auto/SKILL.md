@@ -213,6 +213,34 @@ reqflow_debate_conclude(debate_id="<id>")
 | 代码审查 | 悲观派 + 批评者 | 2 轮 |
 | 交付验证 | 悲观派 + 批评者 + 务实派 | 2 轮 |
 
+### ⛔ Skill 调用追踪要求
+
+每次调用 Skill（无论是宿主 Agent 还是 subagent），⛔ **必须** 调用 `reqflow_skill_invoke` 记录：
+
+```
+reqflow_skill_invoke(
+    run_id="<run_id>",
+    stage="<阶段名称>",
+    skill_name="<Skill 名称>",
+    invoked_by="host",  # host 或 subagent
+    agent_role="",  # 如果是 subagent 调用，填写 agent 角色
+    context="为什么调用这个 Skill",
+    result_summary="Skill 执行结果摘要"
+)
+```
+
+**追踪要求：**
+1. **宿主 Agent 调用 Skill** — 必须记录，invoked_by="host"
+2. **Subagent 调用 Skill** — 必须记录，invoked_by="subagent"，agent_role="对应角色"
+3. **Skill 调用日志** — 在对话中输出详细的 Skill 调用过程和结果
+
+**示例：**
+```
+📚 reqflow_skill_invoke(skill_name="prd-review", invoked_by="host")
+   → Skill 调用已记录：prd-review (由宿主 Agent 在 PRD理解 阶段调用)
+   → 宿主 Agent 必须在对话中描述：为什么调用、执行过程、关键发现
+```
+
 ---
 
 ## ⛔ MCP 工具与对话输出分离规则

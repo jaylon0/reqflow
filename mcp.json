@@ -170,6 +170,10 @@
     {
       "name": "reqflow_debate_conclude",
       "description": "总结辩论共识（加权投票、稳定性检测）"
+    },
+    {
+      "name": "reqflow_skill_invoke",
+      "description": "记录 Skill 调用（追踪宿主 Agent 和 subagent 的 Skill 使用情况）"
     }
   ]
 }

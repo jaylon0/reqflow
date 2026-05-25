@@ -946,6 +946,28 @@ compliance-report:
             "required": ["run_id", "debate_id", "final_consensus"],
         },
     },
+    {
+        "name": "reqflow_skill_invoke",
+        "description": "记录 Skill 调用。用于追踪宿主 Agent 和 subagent 的 Skill 使用情况，提供详细的调用日志。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "当前阶段名称"},
+                "skill_name": {"type": "string", "description": "被调用的 Skill 名称"},
+                "invoked_by": {
+                    "type": "string",
+                    "enum": ["host", "subagent"],
+                    "description": "调用者类型：host（宿主 Agent）或 subagent",
+                    "default": "host"
+                },
+                "agent_role": {"type": "string", "description": "如果是 subagent 调用，记录 agent 角色（如 research-agent）"},
+                "context": {"type": "string", "description": "调用上下文（为什么调用这个 Skill）"},
+                "result_summary": {"type": "string", "description": "Skill 调用结果摘要"},
+            },
+            "required": ["run_id", "stage", "skill_name"],
+        },
+    },
 ]
 
 
@@ -4631,6 +4653,77 @@ async def _handle_debate_conclude(arguments: dict) -> list:
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
+async def _handle_skill_invoke(arguments: dict) -> list:
+    """记录 Skill 调用。用于追踪宿主 Agent 和 subagent 的 Skill 使用情况。"""
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+    skill_name = arguments.get("skill_name", "")
+    invoked_by = arguments.get("invoked_by", "host")  # host / subagent
+    agent_role = arguments.get("agent_role", "")  # 如果是 subagent 调用，记录 agent 角色
+    context = arguments.get("context", "")  # 调用上下文
+    result_summary = arguments.get("result_summary", "")  # 调用结果摘要
+
+    # 使用昵称
+    agent_display_name = _get_agent_display_name(agent_role) if agent_role else "宿主 Agent"
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            if "skill_invocations" not in state:
+                state["skill_invocations"] = []
+            state["skill_invocations"].append({
+                "stage": stage,
+                "skill_name": skill_name,
+                "invoked_by": invoked_by,
+                "agent_role": agent_role,
+                "agent_nickname": _get_agent_nickname(agent_role) if agent_role else "",
+                "context": context,
+                "result_summary": result_summary,
+                "timestamp": __import__("datetime").datetime.now().isoformat(),
+            })
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 构建 display 字段
+    display_lines = [
+        f"**调用阶段:** {stage}",
+        f"**Skill 名称:** {skill_name}",
+        f"**调用者:** {agent_display_name}",
+        f"**调用类型:** {'宿主 Agent' if invoked_by == 'host' else 'Subagent'}",
+    ]
+    if context:
+        display_lines.append(f"**调用上下文:** {context}")
+    if result_summary:
+        display_lines.append(f"**结果摘要:** {result_summary}")
+
+    result = {
+        "status": "recorded",
+        "run_id": run_id,
+        "stage": stage,
+        "skill_name": skill_name,
+        "invoked_by": invoked_by,
+        "agent_role": agent_role,
+        "agent_nickname": _get_agent_nickname(agent_role) if agent_role else "",
+        "output_required": True,
+        "display": {
+            "title": f"📚 Skill 调用：{skill_name}",
+            "content": "\n".join(display_lines),
+        },
+        "host_instruction": (
+            f"Skill `{skill_name}` 已被 {agent_display_name} 调用。请在你的回复中：\n"
+            f"1. 说明为什么调用这个 Skill\n"
+            f"2. 描述 Skill 的执行过程和结果\n"
+            f"3. 如果是 subagent 调用，说明 subagent 如何使用了这个 Skill\n"
+            f"4. 记录 Skill 调用的关键发现和收获"
+        ),
+        "message": f"📚 Skill 调用已记录：{skill_name} (由 {agent_display_name} 在 {stage} 阶段调用)"
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
 # ---------------------------------------------------------------------------
 # 工具处理器注册表（必须在 create_server 之前定义）
 # ---------------------------------------------------------------------------
@@ -4685,6 +4778,8 @@ TOOL_HANDLERS = {
     "reqflow_debate": _handle_debate,
     "reqflow_debate_round": _handle_debate_round,
     "reqflow_debate_conclude": _handle_debate_conclude,
+    # --- Skill 调用追踪工具 ---
+    "reqflow_skill_invoke": _handle_skill_invoke,
 }
 
 
