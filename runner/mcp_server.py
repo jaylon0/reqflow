@@ -691,7 +691,7 @@ compliance-report:
     },
     {
         "name": "reqflow_dispatch_agent",
-        "description": "⛔ 内部状态工具。返回值仅供 agent 内部使用，不得直接展示给用户。Agent 必须根据返回的角色定义和 Prompt 模板在对话中生成 Agent 派遣指引。",
+        "description": "注册 Agent 派遣意图。返回 dispatch_id 和角色定义。⛔ 宿主必须使用平台 subagent 能力实际派遣 Agent，然后调用 reqflow_agent_confirm 确认完成。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -726,6 +726,27 @@ compliance-report:
                 },
             },
             "required": ["run_id", "stage_name", "agent_role", "task_description"],
+        },
+    },
+    {
+        "name": "reqflow_agent_confirm",
+        "description": "确认 Agent 实际派遣完成。宿主使用平台 subagent 能力派遣 Agent 后必须调用此工具。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "dispatch_id": {"type": "string", "description": "派遣 ID（从 reqflow_dispatch_agent 返回）"},
+                "status": {
+                    "type": "string",
+                    "enum": ["dispatched", "completed", "failed"],
+                    "description": "派遣状态：dispatched=已实际派遣, completed=已完成, failed=失败",
+                },
+                "conclusion": {
+                    "type": "string",
+                    "description": "Agent 结论摘要（status=completed 时必填）",
+                },
+            },
+            "required": ["run_id", "dispatch_id", "status"],
         },
     },
     {
@@ -2915,6 +2936,63 @@ async def _handle_stage_report(arguments: dict) -> list:
     # 获取应派遣的 Agent
     required_agents = _STAGE_AGENT_RULES.get(stage_name, [])
 
+    # 检查 required agent 完成状态
+    agent_status = {"completed": [], "pending": [], "failed": []}
+    agent_warnings = []
+    if required_agents and run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            dispatches = state.get("agent_dispatches", [])
+            for agent_role in required_agents:
+                # 找该阶段该 agent 的最新派遣记录
+                agent_dispatches = [
+                    d for d in dispatches
+                    if d.get("agent_role") == agent_role and d.get("stage") == stage_name
+                ]
+                if not agent_dispatches:
+                    agent_status["pending"].append(agent_role)
+                    agent_warnings.append(f"⚠️ {agent_role} 未派遣")
+                else:
+                    latest = agent_dispatches[-1]
+                    status = latest.get("status", "registered")
+                    if status == "completed":
+                        agent_status["completed"].append(agent_role)
+                    elif status == "failed":
+                        agent_status["failed"].append(agent_role)
+                        agent_warnings.append(f"❌ {agent_role} 派遣失败")
+                    else:
+                        agent_status["pending"].append(agent_role)
+                        agent_warnings.append(f"⚠️ {agent_role} 状态={status}，未完成")
+
+    # 检查讨论轮次（关键阶段至少 2 轮）
+    _CRITICAL_STAGES = {"PRD理解", "技术方案", "代码审查", "交付验证"}
+    discussion_check = {"required": False, "rounds": 0, "minimum": 0, "passed": True}
+    if stage_name in _CRITICAL_STAGES and run_dir:
+        discussion_check["required"] = True
+        discussion_check["minimum"] = 2
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            discussion_key = f"discussion_{stage_name}"
+            discussions = state.get(discussion_key, [])
+            discussion_check["rounds"] = len(discussions)
+            if len(discussions) < 2:
+                discussion_check["passed"] = False
+                agent_warnings.append(f"⚠️ 关键阶段 {stage_name} 讨论不足 2 轮（当前 {len(discussions)} 轮）")
+
+    # 推荐辅助 skill
+    _AUXILIARY_SKILL_MAP = {
+        "PRD理解": ["prd-review"],
+        "技术方案": ["tech-plan", "security-audit", "impact-analysis"],
+        "实施计划": ["test-gen"],
+        "Agent执行": ["debug", "refactor"],
+        "代码审查": ["code-review", "security-audit"],
+        "交付验证": ["delivery-check", "test-gen"],
+        "总结": ["write-docs", "retro"],
+    }
+    recommended_skills = _AUXILIARY_SKILL_MAP.get(stage_name, [])
+
     # 计算趋势
     trend = None
     if previous_confidence is not None:
@@ -2932,6 +3010,10 @@ async def _handle_stage_report(arguments: dict) -> list:
         "stage": stage_name,
         "confidence": confidence_score,
         "required_agents": required_agents,
+        "agent_status": agent_status,
+        "agent_warnings": agent_warnings,
+        "discussion_check": discussion_check,
+        "recommended_skills": recommended_skills,
         "output_required": True,
         "visualization": {
             "confidence_bar": _generate_confidence_bar(confidence_score),
@@ -2940,7 +3022,7 @@ async def _handle_stage_report(arguments: dict) -> list:
         "trend": trend,
         "mcp_calls": mcp_calls,
         "artifact_verification": artifact_verification,
-        "message": f"✅ 阶段报告已记录：{stage_name}，置信度 {confidence_score}/100"
+        "message": f"✅ 阶段报告已记录：{stage_name}，置信度 {confidence_score}/100" + (f"；Agent 警告: {'; '.join(agent_warnings)}" if agent_warnings else "")
     }
 
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
@@ -2966,7 +3048,8 @@ def _get_confidence_heat(score: int) -> str:
 
 
 async def _handle_dispatch_agent(arguments: dict) -> list:
-    """记录并验证 Agent 派遣。"""
+    """记录 Agent 派遣意图。宿主必须调用 reqflow_agent_confirm 确认实际派遣。"""
+    import uuid
     run_id = arguments.get("run_id", "")
     stage_name = arguments.get("stage_name", "")
     agent_role = arguments.get("agent_role", "")
@@ -2978,7 +3061,9 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
     required_agents = _STAGE_AGENT_RULES.get(stage_name, [])
     is_required = agent_role in required_agents
 
-    # 记录到 state.json
+    dispatch_id = str(uuid.uuid4())[:8]
+
+    # 记录到 state.json，状态为 registered（非 dispatched）
     run_dir = _resolve_run_dir(run_id)
     if run_dir:
         state_file = run_dir / "state.json"
@@ -2987,13 +3072,15 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
             if "agent_dispatches" not in state:
                 state["agent_dispatches"] = []
             state["agent_dispatches"].append({
+                "dispatch_id": dispatch_id,
                 "stage": stage_name,
                 "agent_role": agent_role,
                 "agent_type": agent_type,
                 "task_description": task_description,
                 "discussion_round": discussion_round,
                 "is_required": is_required,
-                "timestamp": __import__("datetime").datetime.now().isoformat(),
+                "status": "registered",  # registered -> dispatched -> completed/failed
+                "registered_at": __import__("datetime").datetime.now().isoformat(),
             })
             state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -3076,16 +3163,21 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
     missing_agents = []
     if required_agents:
         dispatched_file = run_dir / "state.json" if run_dir else None
-        dispatched_agents = []
+        registered_agents = []
         if dispatched_file and dispatched_file.exists():
             state = json.loads(dispatched_file.read_text(encoding="utf-8"))
-            dispatched_agents = [d["agent_role"] for d in state.get("agent_dispatches", []) if d["stage"] == stage_name]
+            # 只统计非 failed 状态的派遣
+            registered_agents = [
+                d["agent_role"] for d in state.get("agent_dispatches", [])
+                if d["stage"] == stage_name and d.get("status") != "failed"
+            ]
 
-        missing_agents = [a for a in required_agents if a not in dispatched_agents]
+        missing_agents = [a for a in required_agents if a not in registered_agents]
 
     # 返回简化状态（详细指引由 agent 在对话中生成）
     result = {
-        "status": "dispatched",
+        "status": "registered",
+        "dispatch_id": dispatch_id,
         "stage": stage_name,
         "agent": agent_role,
         "agent_type": agent_type,
@@ -3093,7 +3185,65 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
         "is_required": is_required,
         "missing_agents": missing_agents,
         "output_required": True,
-        "message": f"✅ Agent 派遣已记录：{agent_role}" + (f"，还有 {len(missing_agents)} 个必须 Agent 未派遣" if missing_agents else "")
+        "message": f"⚠️ Agent 派遣已注册：{agent_role}（dispatch_id: {dispatch_id}）",
+        "next_action": f"⛔ 必须使用平台 subagent 能力实际派遣此 Agent，然后调用 reqflow_agent_confirm(dispatch_id='{dispatch_id}', status='completed') 确认完成",
+        "blocking": is_required,
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+async def _handle_agent_confirm(arguments: dict) -> list:
+    """确认 Agent 实际派遣完成。"""
+    run_id = arguments.get("run_id", "")
+    dispatch_id = arguments.get("dispatch_id", "")
+    status = arguments.get("status", "dispatched")
+    conclusion = arguments.get("conclusion", "")
+
+    run_dir = _resolve_run_dir(run_id)
+    if not run_dir:
+        return [TextContent(type="text", text=json.dumps({"error": "run_id 无效"}, ensure_ascii=False))]
+
+    state_file = run_dir / "state.json"
+    if not state_file.exists():
+        return [TextContent(type="text", text=json.dumps({"error": "state.json 不存在"}, ensure_ascii=False))]
+
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    dispatches = state.get("agent_dispatches", [])
+
+    # 查找匹配的 dispatch
+    target = None
+    for d in dispatches:
+        if d.get("dispatch_id") == dispatch_id:
+            target = d
+            break
+
+    if not target:
+        return [TextContent(type="text", text=json.dumps({
+            "error": f"未找到 dispatch_id={dispatch_id}",
+            "available_ids": [d.get("dispatch_id") for d in dispatches],
+        }, ensure_ascii=False))]
+
+    # 更新状态
+    now = __import__("datetime").datetime.now().isoformat()
+    target["status"] = status
+    if status == "dispatched":
+        target["dispatched_at"] = now
+    elif status == "completed":
+        target["completed_at"] = now
+        target["conclusion"] = conclusion
+    elif status == "failed":
+        target["failed_at"] = now
+        target["error"] = conclusion
+
+    state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    result = {
+        "status": "confirmed",
+        "dispatch_id": dispatch_id,
+        "agent_role": target["agent_role"],
+        "new_status": status,
+        "message": f"✅ Agent {target['agent_role']} 状态已更新为 {status}",
     }
 
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
@@ -3263,6 +3413,7 @@ TOOL_HANDLERS = {
     # --- V7 新增工具 ---
     "reqflow_stage_report": _handle_stage_report,
     "reqflow_dispatch_agent": _handle_dispatch_agent,
+    "reqflow_agent_confirm": _handle_agent_confirm,
     "reqflow_acceptance_options": _handle_acceptance_options,
     # --- Skill 模块化重构新增工具 ---
     "reqflow_discussion_round": _handle_discussion_round,

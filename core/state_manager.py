@@ -211,7 +211,6 @@ class StateManager:
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoint_dir = self.run_dir / "checkpoints"
-        self.checkpoint_dir.mkdir(exist_ok=True)
         self._run_id = run_id
         self._state: RunState | None = None
 
@@ -301,7 +300,8 @@ class StateManager:
             stage=stage,
         )
 
-        # Save state snapshot
+        # Save state snapshot (create checkpoints dir lazily)
+        self.checkpoint_dir.mkdir(exist_ok=True)
         checkpoint_dir = self.checkpoint_dir / checkpoint.checkpoint_id
         checkpoint_dir.mkdir(exist_ok=True)
 

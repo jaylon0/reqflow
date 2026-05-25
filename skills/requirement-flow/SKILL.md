@@ -204,10 +204,65 @@ reqflow_verify(run_id="<run-id>", gate="completion-gate", evidence={...})
 | `reqflow_acceptance_update` | 更新验收标准状态 | - |
 | `reqflow_health` | 健康检查 | - |
 | `reqflow_stage_report` | 生成结构化阶段报告 | ✅ 每阶段 |
-| `reqflow_dispatch_agent` | 记录并验证 Agent 派遣 | ✅ 派遣时 |
+| `reqflow_dispatch_agent` | 注册 Agent 派遣意图 | ✅ 派遣时 |
+| `reqflow_agent_confirm` | 确认 Agent 实际派遣完成 | ✅ 派遣后 |
+| `reqflow_discussion_round` | 记录讨论轮次 | ✅ 讨论时 |
 | `reqflow_acceptance_options` | 生成验收选项 | ✅ 验收时 |
 | `reqflow_artifact_register` | 注册生成的产物 | ✅ 生成产物时 |
 | `reqflow_artifact_check` | 检查产物完整性 | ✅ 归档前 |
+
+### ⛔ Agent 派遣确认流程
+
+派遣 Agent 时必须遵循两步流程：
+
+1. 调用 `reqflow_dispatch_agent` 注册意图，获取 `dispatch_id`
+2. 使用平台 subagent 能力实际派遣 Agent
+3. 调用 `reqflow_agent_confirm` 确认完成
+
+```
+reqflow_agent_confirm(
+    run_id="<run_id>",
+    dispatch_id="<从 reqflow_dispatch_agent 返回>",
+    status="completed",
+    conclusion="Agent 结论摘要"
+)
+```
+
+### ⛔ 关键阶段讨论轮次强制要求
+
+以下关键阶段必须至少进行 **2 轮** Agent 讨论后才能提交阶段报告：
+
+| 关键阶段 | 最少轮次 |
+|----------|----------|
+| PRD理解 | 2 轮 |
+| 技术方案 | 2 轮 |
+| 代码审查 | 2 轮 |
+| 交付验证 | 2 轮 |
+
+每轮讨论必须调用 `reqflow_discussion_round` 记录：
+
+```
+reqflow_discussion_round(
+    run_id="<run_id>",
+    stage="<阶段名称>",
+    round=1,
+    agents=["agent1", "agent2"]
+)
+```
+
+### 辅助 Skill 调用指引
+
+根据阶段上下文，可调用相关辅助 Skill 增强能力：
+
+| 阶段 | 推荐辅助 Skill | 调用时机 |
+|------|----------------|----------|
+| PRD理解 | `prd-review` | 审查 PRD 完整性 |
+| 技术方案 | `tech-plan`, `security-audit`, `impact-analysis` | 方案设计、安全评估、影响分析 |
+| 实施计划 | `test-gen` | 生成测试用例 |
+| Agent执行 | `debug`, `refactor` | 调试问题、重构代码 |
+| 代码审查 | `code-review`, `security-audit` | 代码审查、安全检查 |
+| 交付验证 | `delivery-check`, `test-gen` | 交付验证、测试补充 |
+| 总结 | `write-docs`, `retro` | 文档撰写、复盘分析 |
 
 ## ⛔ MCP 工具与对话输出分离规则
 

@@ -131,6 +131,61 @@ reqflow_plan(requirement="<需求描述>")
 
 ---
 
+### ⛔ Agent 确认
+
+派遣 Agent 后，⛔ **必须** 使用平台 subagent 能力实际派遣 Agent，然后调用 `reqflow_agent_confirm` 确认完成：
+
+~~~
+reqflow_agent_confirm(
+    run_id="<run_id>",
+    dispatch_id="<从 reqflow_dispatch_agent 返回>",
+    status="completed",
+    conclusion="Agent 结论摘要"
+)
+~~~
+
+---
+
+### ⛔ 关键阶段讨论轮次强制要求
+
+以下关键阶段必须至少进行 **2 轮** Agent 讨论后才能提交阶段报告：
+
+| 关键阶段 | 最少轮次 |
+|----------|----------|
+| PRD理解 | 2 轮 |
+| 技术方案 | 2 轮 |
+| 代码审查 | 2 轮 |
+| 交付验证 | 2 轮 |
+
+每轮讨论必须调用 `reqflow_discussion_round` 记录：
+
+~~~
+reqflow_discussion_round(
+    run_id="<run_id>",
+    stage="<阶段名称>",
+    round=1,
+    agents=["agent1", "agent2"]
+)
+~~~
+
+---
+
+### 辅助 Skill 调用指引
+
+根据阶段上下文，可调用相关辅助 Skill 增强能力：
+
+| 阶段 | 推荐辅助 Skill | 调用时机 |
+|------|----------------|----------|
+| PRD理解 | `prd-review` | 审查 PRD 完整性 |
+| 技术方案 | `tech-plan`, `security-audit`, `impact-analysis` | 方案设计、安全评估、影响分析 |
+| 实施计划 | `test-gen` | 生成测试用例 |
+| Agent执行 | `debug`, `refactor` | 调试问题、重构代码 |
+| 代码审查 | `code-review`, `security-audit` | 代码审查、安全检查 |
+| 交付验证 | `delivery-check`, `test-gen` | 交付验证、测试补充 |
+| 总结 | `write-docs`, `retro` | 文档撰写、复盘分析 |
+
+---
+
 ## ⛔ MCP 工具与对话输出分离规则
 
 **核心原则：MCP 返回值是内部状态，不是给用户看的。Agent 必须在对话中生成完整报告。**

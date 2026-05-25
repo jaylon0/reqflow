@@ -3,7 +3,7 @@ name: using-reqflow
 description: >
   ⛔ 必须在对话中输出详细阶段报告、置信度评估、Agent 共识。
   ⛔ 必须派遣指定 Agent，不得跳过。
-  ⛔ 必须调用 reqflow_stage_report、reqflow_dispatch_agent。
+  ⛔ 必须调用 reqflow_stage_report、reqflow_dispatch_agent、reqflow_agent_confirm、reqflow_discussion_round。
   ⛔ 每阶段完成后必须等待用户确认，确认前不得进入下一阶段。
   ReqFlow Harness 使用指南。从需求到交付的完整工程化流程。
 ---
@@ -125,6 +125,53 @@ reqflow_dispatch_agent(
     task_description="任务描述"
 )
 ```
+
+⛔ **必须** 使用平台 subagent 能力实际派遣 Agent，然后调用 `reqflow_agent_confirm` 确认完成：
+
+```
+reqflow_agent_confirm(
+    run_id="<run_id>",
+    dispatch_id="<从 reqflow_dispatch_agent 返回>",
+    status="completed",
+    conclusion="Agent 结论摘要"
+)
+```
+
+### ⛔ 关键阶段讨论轮次强制要求
+
+以下关键阶段必须至少进行 **2 轮** Agent 讨论后才能提交阶段报告：
+
+| 关键阶段 | 最少轮次 |
+|----------|----------|
+| PRD理解 | 2 轮 |
+| 技术方案 | 2 轮 |
+| 代码审查 | 2 轮 |
+| 交付验证 | 2 轮 |
+
+每轮讨论必须调用 `reqflow_discussion_round` 记录：
+
+```
+reqflow_discussion_round(
+    run_id="<run_id>",
+    stage="<阶段名称>",
+    round=1,
+    agents=["agent1", "agent2"]
+)
+```
+
+### 辅助 Skill 调用指引
+
+根据阶段上下文，可调用相关辅助 Skill 增强能力：
+
+| 阶段 | 推荐辅助 Skill | 调用时机 |
+|------|----------------|----------|
+| PRD理解 | `prd-review` | 审查 PRD 完整性 |
+| 技术方案 | `tech-plan`, `security-audit`, `impact-analysis` | 方案设计、安全评估、影响分析 |
+| 实施计划 | `test-gen` | 生成测试用例 |
+| Agent执行 | `debug`, `refactor` | 调试问题、重构代码 |
+| 代码审查 | `code-review`, `security-audit` | 代码审查、安全检查 |
+| 交付验证 | `delivery-check`, `test-gen` | 交付验证、测试补充 |
+| 总结 | `write-docs`, `retro` | 文档撰写、复盘分析 |
 
 ### 验收时必须调用 `reqflow_acceptance_options`
 
@@ -249,6 +296,8 @@ ReqFlow 根据需求内容自动路由到不同级别，每个级别映射到 YA
 | `reqflow_acceptance_options` | 生成验收选项 | ✅ 验收时 |
 | `reqflow_artifact_register` | 注册生成的产物 | ✅ 生成产物时 |
 | `reqflow_artifact_check` | 检查产物完整性 | ✅ 归档前 |
+| `reqflow_agent_confirm` | 确认 Agent 派遣完成 | ✅ 派遣后 |
+| `reqflow_discussion_round` | 记录讨论轮次 | ✅ 关键阶段每轮 |
 
 ---
 
@@ -413,6 +462,8 @@ ReqFlow 根据需求内容自动路由到不同级别，每个级别映射到 YA
 - **不得跳过 reqflow_acceptance_options 调用 — 验收时必须生成选项**
 - **不得跳过 reqflow_artifact_register 调用 — 生成产物时必须注册**
 - **不得跳过 reqflow_artifact_check 调用 — 归档前必须检查完整性**
+- **不得跳过 reqflow_agent_confirm 调用 — 派遣 Agent 后必须确认完成**
+- **不得跳过 reqflow_discussion_round 调用 — 关键阶段必须记录讨论轮次**
 
 ## 沟通语言
 

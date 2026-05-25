@@ -125,7 +125,7 @@ reqflow_stage_report(
 | 总结 | doc-agent |
 | 归档 | 无 |
 
-派遣时必须调用 `reqflow_dispatch_agent`：
+派遣时必须调用 `reqflow_dispatch_agent` 注册意图：
 
 ```
 reqflow_dispatch_agent(
@@ -133,6 +133,17 @@ reqflow_dispatch_agent(
     stage_name="<阶段名称>",
     agent_role="research-agent",
     task_description="任务描述"
+)
+```
+
+⛔ **必须** 使用平台 subagent 能力实际派遣 Agent，然后调用 `reqflow_agent_confirm` 确认完成：
+
+```
+reqflow_agent_confirm(
+    run_id="<run_id>",
+    dispatch_id="<从 reqflow_dispatch_agent 返回>",
+    status="completed",
+    conclusion="Agent 结论摘要"
 )
 ```
 

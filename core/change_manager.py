@@ -17,12 +17,6 @@ logger = logging.getLogger(__name__)
 
 # 变更目录下的标准子目录
 _CHANGE_SUBDIRS = [
-    "exploration",
-    "brainstorming",
-    "development",
-    "review",
-    "verification",
-    "summary",
     "runs",
 ]
 
