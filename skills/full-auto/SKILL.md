@@ -188,11 +188,11 @@ reqflow_artifact_check(run_id="<run_id>")
 
 ## ⛔ MCP 工具与对话输出分离规则
 
-**核心原则：MCP 返回值是内部状态，不是给用户看的。Agent 必须在对话中生成完整报告。**
+**核心原则：MCP 返回的 `display` 字段包含格式化内容，必须在对话中展示给用户。**
 
 ### 强制约束
 
-1. **MCP 返回值不得直接展示** — `reqflow_stage_report`、`reqflow_dispatch_agent`、`reqflow_acceptance_options` 返回的是 JSON 状态，不是格式化报告
+1. **MCP 返回的 `display` 字段必须在对话中展示** — `reqflow_stage_report`、`reqflow_dispatch_agent`、`reqflow_acceptance_options` 等工具返回的 JSON 中包含 `display` 字段（含 `title` 和 `content`），Agent 必须将 `display.content` 的内容在对话中输出
 2. **Agent 必须在对话中生成报告** — 根据 MCP 输入参数和返回状态，在对话中输出完整的格式化报告
 3. **MCP 返回值中的 `output_required: true`** — 表示 agent 必须在对话中输出内容
 

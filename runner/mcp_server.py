@@ -1933,7 +1933,42 @@ async def _handle_report(arguments: dict) -> list:
     elif status == "failed":
         lines.append("\n下一步: 检查错误原因，决定是否进入修复循环")
 
-    return [TextContent(type="text", text="\n".join(lines))]
+    # 构建 display 字段
+    status_icon = {"done": "✅", "conditional": "⚠️", "blocked": "🚫", "failed": "❌"}.get(status, "📝")
+    display_lines = [
+        f"**状态:** {status_icon} {status}",
+    ]
+    if stages:
+        total = len(stages)
+        idx_display = stage_index + 1 if stage_index >= 0 else "?"
+        progress_pct = round((idx_display / total) * 100) if isinstance(idx_display, int) else 0
+        bar = "█" * (progress_pct // 10) + "░" * (10 - progress_pct // 10)
+        display_lines.append(f"**进度:** {bar} {idx_display}/{total} ({progress_pct}%)")
+    if completed:
+        display_lines.append(f"**已完成:** {', '.join(completed)}")
+    if artifacts:
+        display_lines.append(f"**产出:** {', '.join(artifacts)}")
+    if error:
+        display_lines.append(f"**错误:** {error}")
+    if risks:
+        display_lines.append(f"**残留风险 ({len(risks)}):**")
+        for r in risks:
+            display_lines.append(f"  - {r}")
+    remaining = [s for s in stages if s not in completed and s != stage]
+    if remaining:
+        display_lines.append(f"**剩余阶段 ({len(remaining)}):** {', '.join(remaining)}")
+
+    result = {
+        "status": status,
+        "stage": stage,
+        "display": {
+            "title": f"📡 reqflow_report(stage=\"{stage}\")",
+            "content": "\n".join(display_lines),
+        },
+        "message": f"✅ 阶段报告已记录：{stage}，状态：{status}",
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
 _GATE_EVIDENCE_SCHEMAS = {
@@ -2037,28 +2072,52 @@ async def _handle_verify(arguments: dict) -> list:
         f"结果: {'通过' if result.passed else '未通过'}",
     ]
 
+    # 构建 display 字段
+    display_lines = []
+
     if result.passed:
         lines.append("\n门禁通过，可以进入下一阶段。")
+        display_lines.append(f"**结果:** ✅ 通过")
         # 输出证据摘要
         if evidence:
             lines.append("\n证据摘要:")
+            display_lines.append("**证据摘要:**")
             for k, v in evidence.items():
                 display_v = v if not isinstance(v, str) or len(v) <= 80 else v[:77] + "..."
                 lines.append(f"  {k}: {display_v}")
+                display_lines.append(f"  - {k}: {display_v}")
         if result.summary:
             lines.append(f"\n总结: {result.summary}")
+            display_lines.append(f"**总结:** {result.summary}")
+        display_lines.append("\n✅ 门禁通过，可以进入下一阶段。")
     else:
         lines.append("\n门禁未通过，以下项目需要修复:")
+        display_lines.append(f"**结果:** ❌ 未通过")
+        display_lines.append("**需要修复:**")
         for item in result.blocking_items:
             lines.append(f"  - {item.name}: {item.message}")
+            display_lines.append(f"  - {item.name}: {item.message}")
         # 返回 expected evidence schema 帮助 Agent 构造正确的 evidence
         expected = _get_gate_evidence_schema(gate)
         if expected:
             lines.append(f"\n期望的 evidence 格式:")
             lines.append(json.dumps(expected, indent=2, ensure_ascii=False))
+            display_lines.append(f"\n**期望的 evidence 格式:**")
+            display_lines.append(f"```json\n{json.dumps(expected, indent=2, ensure_ascii=False)}\n```")
         lines.append("\n请修复后重新调用 reqflow_verify。")
+        display_lines.append("\n🔧 请修复后重新调用 reqflow_verify。")
 
-    return [TextContent(type="text", text="\n".join(lines))]
+    result_data = {
+        "passed": result.passed,
+        "gate": gate,
+        "display": {
+            "title": f"📡 reqflow_verify(gate=\"{gate}\")",
+            "content": "\n".join(display_lines),
+        },
+        "message": f"{'✅' if result.passed else '❌'} 门禁 {gate} {'通过' if result.passed else '未通过'}",
+    }
+
+    return [TextContent(type="text", text=json.dumps(result_data, ensure_ascii=False))]
 
 
 async def _handle_accept(arguments: dict) -> list:
@@ -2521,7 +2580,18 @@ async def _handle_artifact_register(arguments: dict) -> list:
     except Exception as e:
         return [TextContent(type="text", text=f"[错误] 注册失败: {e}")]
 
-    return [TextContent(type="text", text=f"✅ 已注册产物: {artifact_path} (阶段: {stage})")]
+    result = {
+        "status": "registered",
+        "path": artifact_path,
+        "stage": stage,
+        "display": {
+            "title": f"📡 reqflow_artifact_register(path=\"{artifact_path}\")",
+            "content": f"**产物:** {artifact_path}\n**阶段:** {stage}\n**类型:** {artifact_type}\n**描述:** {description or '无'}\n\n✅ 已注册到 state.json",
+        },
+        "message": f"✅ 已注册产物: {artifact_path} (阶段: {stage})",
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
 # L3 阶段产物定义
@@ -2616,11 +2686,38 @@ async def _handle_artifact_check(arguments: dict) -> list:
 
     lines.insert(1, f"总计: {total_found}/{total_expected} 产物已生成")
 
+    # 构建 display 字段
+    display_lines = [f"**总计:** {total_found}/{total_expected} 产物已生成"]
+    for s in sorted(stages_to_check):
+        expected = _L3_ARTIFACTS.get(s, [])
+        if not expected:
+            continue
+        found = [art for art in expected if art in existing or (art.endswith("/") and any(art.rstrip("/") in str(p) for p in existing))]
+        missing = [art for art in expected if art not in found]
+        icon = "✅" if not missing else "⚠️"
+        display_lines.append(f"  {icon} [{s}] {len(found)}/{len(expected)}")
+        if missing:
+            display_lines.append(f"    缺失: {', '.join(missing)}")
+
     if total_found < total_expected:
         lines.append("")
         lines.append("请补充缺失产物后重新检查。")
+        display_lines.append("\n🔧 请补充缺失产物后重新检查。")
+    else:
+        display_lines.append("\n✅ 所有产物完整。")
 
-    return [TextContent(type="text", text="\n".join(lines))]
+    result = {
+        "total_found": total_found,
+        "total_expected": total_expected,
+        "complete": total_found >= total_expected,
+        "display": {
+            "title": "📡 reqflow_artifact_check",
+            "content": "\n".join(display_lines),
+        },
+        "message": f"{'✅' if total_found >= total_expected else '⚠️'} 产物检查: {total_found}/{total_expected}",
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
 async def _handle_multi_repo_switch(arguments: dict) -> list:
@@ -2875,6 +2972,26 @@ _STAGE_AGENT_RULES: dict[str, list[str]] = {
     "归档": [],
 }
 
+# P3: 选择性等待 — 定义每个阶段的 Agent 并行组
+# 同组内 Agent 可并行派遣，不同组之间需要顺序等待
+_STAGE_PARALLEL_GROUPS: dict[str, list[list[str]]] = {
+    "启动": [],
+    "PRD理解": [["research-agent", "architecture-agent"]],  # 可并行
+    "Spec治理": [["security-agent"]],
+    "工作流智能": [["research-agent"]],
+    "上下文发现": [["research-agent"]],
+    "技术方案": [["architecture-agent"], ["security-agent"]],  # 先架构后安全
+    "实施计划": [["test-gen-agent"]],
+    "Agent执行": [],  # 动态派遣
+    "代码审查": [["security-agent", "performance-agent"]],  # 可并行
+    "交付验证": [["test-gen-agent"]],
+    "总结": [["doc-agent"]],
+    "归档": [],
+}
+
+# 关键阶段定义（需要至少 2 轮讨论）
+_CRITICAL_STAGES = {"PRD理解", "技术方案", "代码审查", "交付验证"}
+
 
 async def _handle_stage_report(arguments: dict) -> list:
     """生成结构化阶段报告。"""
@@ -2966,7 +3083,6 @@ async def _handle_stage_report(arguments: dict) -> list:
                         agent_warnings.append(f"⚠️ {agent_role} 状态={status}，未完成")
 
     # 检查讨论轮次（关键阶段至少 2 轮）
-    _CRITICAL_STAGES = {"PRD理解", "技术方案", "代码审查", "交付验证"}
     discussion_check = {"required": False, "rounds": 0, "minimum": 0, "passed": True}
     if stage_name in _CRITICAL_STAGES and run_dir:
         discussion_check["required"] = True
@@ -2981,14 +3097,14 @@ async def _handle_stage_report(arguments: dict) -> list:
                 discussion_check["passed"] = False
                 agent_warnings.append(f"⚠️ 关键阶段 {stage_name} 讨论不足 2 轮（当前 {len(discussions)} 轮）")
 
-    # 推荐辅助 skill
+    # 推荐辅助 skill（包含新增的验证 skill）
     _AUXILIARY_SKILL_MAP = {
         "PRD理解": ["prd-review"],
         "技术方案": ["tech-plan", "security-audit", "impact-analysis"],
         "实施计划": ["test-gen"],
         "Agent执行": ["debug", "refactor"],
-        "代码审查": ["code-review", "security-audit"],
-        "交付验证": ["delivery-check", "test-gen"],
+        "代码审查": ["code-review", "security-audit", "vuln-scan", "code-quality", "adversarial-review"],
+        "交付验证": ["delivery-check", "test-gen", "test-coverage"],
         "总结": ["write-docs", "retro"],
     }
     recommended_skills = _AUXILIARY_SKILL_MAP.get(stage_name, [])
@@ -3004,6 +3120,39 @@ async def _handle_stage_report(arguments: dict) -> list:
             "direction": "↑" if diff > 0 else "↓" if diff < 0 else "→"
         }
 
+    # 构建 display 字段
+    confidence_bar = _generate_confidence_bar(confidence_score)
+    confidence_heat = _get_confidence_heat(confidence_score)
+    display_lines = [
+        f"**阶段:** {stage_name}",
+        f"**置信度:** {confidence_heat} {confidence_bar} {confidence_score}/100",
+    ]
+    if trend:
+        display_lines.append(f"**趋势:** {trend['direction']} (前值: {trend['previous']})")
+    if completed_items:
+        display_lines.append(f"**完成项 ({len(completed_items)}):**")
+        for item in completed_items:
+            display_lines.append(f"  - ✅ {item}")
+    if risk_items:
+        display_lines.append(f"**风险项 ({len(risk_items)}):**")
+        for item in risk_items:
+            display_lines.append(f"  - ⚠️ {item}")
+    if artifact_verification:
+        display_lines.append(f"**产物验证:**")
+        for av in artifact_verification:
+            icon = "✅" if av.get("exists") else "❌"
+            display_lines.append(f"  - {icon} {av.get('file')}")
+    if agent_warnings:
+        display_lines.append(f"**Agent 警告:**")
+        for w in agent_warnings:
+            display_lines.append(f"  - {w}")
+    if recommended_skills:
+        display_lines.append(f"**推荐辅助 Skill:** {', '.join(recommended_skills)}")
+    if next_steps:
+        display_lines.append(f"**下一步:**")
+        for step in next_steps:
+            display_lines.append(f"  - {step}")
+
     # 返回详细状态（支持可视化）
     result = {
         "status": "recorded",
@@ -3016,12 +3165,16 @@ async def _handle_stage_report(arguments: dict) -> list:
         "recommended_skills": recommended_skills,
         "output_required": True,
         "visualization": {
-            "confidence_bar": _generate_confidence_bar(confidence_score),
-            "confidence_heat": _get_confidence_heat(confidence_score),
+            "confidence_bar": confidence_bar,
+            "confidence_heat": confidence_heat,
         },
         "trend": trend,
         "mcp_calls": mcp_calls,
         "artifact_verification": artifact_verification,
+        "display": {
+            "title": f"📡 reqflow_stage_report(stage_name=\"{stage_name}\")",
+            "content": "\n".join(display_lines),
+        },
         "message": f"✅ 阶段报告已记录：{stage_name}，置信度 {confidence_score}/100" + (f"；Agent 警告: {'; '.join(agent_warnings)}" if agent_warnings else "")
     }
 
@@ -3174,6 +3327,28 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
 
         missing_agents = [a for a in required_agents if a not in registered_agents]
 
+    # P3: 获取并行组信息
+    parallel_groups = _STAGE_PARALLEL_GROUPS.get(stage_name, [])
+    parallel_with = []
+    sequential_after = []
+    for group in parallel_groups:
+        if agent_role in group:
+            parallel_with = [a for a in group if a != agent_role]
+            break
+
+    # 构建 display 字段
+    display_lines = [
+        f"**角色:** {agent_def.get('role', '未知')}",
+        f"**能力:** {', '.join(agent_def.get('capabilities', []))}",
+        f"**任务:** {task_description}",
+        f"**是否必须:** {'✅ 是' if is_required else '⚠️ 否（可选）'}",
+        f"**dispatch_id:** `{dispatch_id}`",
+    ]
+    if missing_agents:
+        display_lines.append(f"**还有未派遣的必须 Agent:** {', '.join(missing_agents)}")
+    if parallel_with:
+        display_lines.append(f"**可并行派遣:** {', '.join(parallel_with)}")
+
     # 返回简化状态（详细指引由 agent 在对话中生成）
     result = {
         "status": "registered",
@@ -3184,7 +3359,14 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
         "discussion_round": discussion_round,
         "is_required": is_required,
         "missing_agents": missing_agents,
+        "parallel_with": parallel_with,
+        "parallel_groups": parallel_groups,
         "output_required": True,
+        "display": {
+            "title": f"🤖 Agent 派遣：{agent_role}",
+            "content": "\n".join(display_lines),
+            "action_required": f"⛔ 必须使用平台 subagent 能力实际派遣此 Agent，然后调用 reqflow_agent_confirm(dispatch_id='{dispatch_id}', status='completed') 确认完成",
+        },
         "message": f"⚠️ Agent 派遣已注册：{agent_role}（dispatch_id: {dispatch_id}）",
         "next_action": f"⛔ 必须使用平台 subagent 能力实际派遣此 Agent，然后调用 reqflow_agent_confirm(dispatch_id='{dispatch_id}', status='completed') 确认完成",
         "blocking": is_required,
@@ -3238,11 +3420,25 @@ async def _handle_agent_confirm(arguments: dict) -> list:
 
     state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # 构建 display 字段
+    status_icon = {"completed": "✅", "failed": "❌", "dispatched": "🚀"}.get(status, "📝")
+    display_lines = [
+        f"**Agent:** {target['agent_role']}",
+        f"**状态:** {status_icon} {status}",
+        f"**dispatch_id:** `{dispatch_id}`",
+    ]
+    if conclusion:
+        display_lines.append(f"**结论:** {conclusion}")
+
     result = {
         "status": "confirmed",
         "dispatch_id": dispatch_id,
         "agent_role": target["agent_role"],
         "new_status": status,
+        "display": {
+            "title": f"📡 reqflow_agent_confirm(agent=\"{target['agent_role']}\")",
+            "content": "\n".join(display_lines),
+        },
         "message": f"✅ Agent {target['agent_role']} 状态已更新为 {status}",
     }
 
@@ -3250,12 +3446,18 @@ async def _handle_agent_confirm(arguments: dict) -> list:
 
 
 async def _handle_discussion_round(arguments: dict) -> list:
-    """记录讨论轮次。"""
+    """记录讨论轮次。支持 host 协调的讨论流程。"""
     run_id = arguments.get("run_id", "")
     stage = arguments.get("stage", "")
     round_num = arguments.get("round", 0)
     agents = arguments.get("agents", [])
     workers = arguments.get("workers", [])
+    # P2: Host 协调讨论新增字段
+    topic = arguments.get("topic", "")
+    points = arguments.get("points", [])  # 各 agent 的观点
+    agreements = arguments.get("agreements", [])  # 达成共识的点
+    disagreements = arguments.get("disagreements", [])  # 有分歧的点
+    decision = arguments.get("decision", "")  # 最终决策
 
     # 记录到 state.json
     run_dir = _resolve_run_dir(run_id)
@@ -3270,9 +3472,40 @@ async def _handle_discussion_round(arguments: dict) -> list:
                 "round": round_num,
                 "agents": agents,
                 "workers": workers,
+                "topic": topic,
+                "points": points,
+                "agreements": agreements,
+                "disagreements": disagreements,
+                "decision": decision,
                 "timestamp": __import__("datetime").datetime.now().isoformat(),
             })
             state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 构建 display 字段
+    display_lines = [
+        f"**阶段:** {stage}",
+        f"**轮次:** {round_num}",
+        f"**参与者:** {', '.join(agents)}",
+    ]
+    if topic:
+        display_lines.append(f"**议题:** {topic}")
+    if points:
+        display_lines.append("**观点汇总:**")
+        for p in points:
+            if isinstance(p, dict):
+                display_lines.append(f"  - **{p.get('agent', '?')}:** {p.get('point', '')}")
+            else:
+                display_lines.append(f"  - {p}")
+    if agreements:
+        display_lines.append(f"**共识 ({len(agreements)}):**")
+        for a in agreements:
+            display_lines.append(f"  - ✅ {a}")
+    if disagreements:
+        display_lines.append(f"**分歧 ({len(disagreements)}):**")
+        for d in disagreements:
+            display_lines.append(f"  - ⚠️ {d}")
+    if decision:
+        display_lines.append(f"**决策:** {decision}")
 
     # 返回结果
     result = {
@@ -3282,9 +3515,16 @@ async def _handle_discussion_round(arguments: dict) -> list:
         "round": round_num,
         "agents_count": len(agents),
         "workers_count": len(workers),
+        "topic": topic,
+        "agreements_count": len(agreements),
+        "disagreements_count": len(disagreements),
         "output_required": True,
         "output_template": "discussion_round",
-        "message": f"✅ 讨论轮次已记录：阶段 {stage}，轮次 {round_num}，{len(agents)} 个 Agent，{len(workers)} 个 Worker"
+        "display": {
+            "title": f"💬 讨论轮次：{stage} 第 {round_num} 轮",
+            "content": "\n".join(display_lines),
+        },
+        "message": f"✅ 讨论轮次已记录：阶段 {stage}，轮次 {round_num}，{len(agents)} 个 Agent，{len(agreements)} 项共识，{len(disagreements)} 项分歧"
     }
 
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
@@ -3315,6 +3555,22 @@ async def _handle_consensus(arguments: dict) -> list:
             }
             state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # 构建 display 字段
+    confidence_heat = _get_confidence_heat(int(confidence * 100))
+    display_lines = [
+        f"**阶段:** {stage}",
+        f"**讨论轮次:** {rounds}",
+        f"**置信度:** {confidence_heat} {confidence:.1%}",
+        f"**共识:** {consensus}",
+    ]
+    if dissents:
+        display_lines.append(f"**异议 ({len(dissents)}):**")
+        for d in dissents:
+            if isinstance(d, dict):
+                display_lines.append(f"  - **{d.get('agent', '?')}:** {d.get('reason', '')}")
+            else:
+                display_lines.append(f"  - {d}")
+
     # 返回结果
     result = {
         "status": "recorded",
@@ -3326,6 +3582,10 @@ async def _handle_consensus(arguments: dict) -> list:
         "dissents_count": len(dissents),
         "output_required": True,
         "output_template": "consensus",
+        "display": {
+            "title": f"🤝 共识达成：{stage}",
+            "content": "\n".join(display_lines),
+        },
         "message": f"✅ 共识已记录：阶段 {stage}，{rounds} 轮讨论，置信度 {confidence:.1%}，{len(dissents)} 项异议"
     }
 
@@ -3356,6 +3616,32 @@ async def _handle_acceptance_options(arguments: dict) -> list:
     fail_count = sum(1 for r in verification_results if r.get("status") == "fail")
     warning_count = sum(1 for r in verification_results if r.get("status") == "warning")
 
+    # 构建 display 字段
+    display_lines = [
+        f"**交付物 ({len(deliverables)}):**",
+    ]
+    for d in deliverables:
+        if isinstance(d, dict):
+            display_lines.append(f"  - {d.get('name', d)}")
+        else:
+            display_lines.append(f"  - {d}")
+    display_lines.append(f"\n**验证结果:**")
+    display_lines.append(f"  - ✅ 通过: {pass_count}")
+    display_lines.append(f"  - ❌ 失败: {fail_count}")
+    display_lines.append(f"  - ⚠️ 警告: {warning_count}")
+    if verification_results:
+        display_lines.append(f"\n**详细验证:**")
+        for r in verification_results:
+            icon = {"pass": "✅", "fail": "❌", "warning": "⚠️"}.get(r.get("status"), "❓")
+            display_lines.append(f"  - {icon} {r.get('item', '?')}: {r.get('detail', '')}")
+    display_lines.append(f"\n#### 请做出决定")
+    display_lines.append(f"| 选项 | 操作 | 后续流程 |")
+    display_lines.append(f"|------|------|----------|")
+    display_lines.append(f"| ✅ 通过验收 | reqflow_accept | 归档、清理、流程结束 |")
+    display_lines.append(f"| ❌ 拒绝验收 | reqflow_reject | 修复循环（最多 3 轮） |")
+    display_lines.append(f"| 🔧 部分验收 | reqflow_accept + scope | 部分归档 |")
+    display_lines.append(f"| ⏸ 暂挂 | 不调用工具 | 保持状态 |")
+
     # 返回简化状态（详细验收面板由 agent 在对话中生成）
     result = {
         "status": "ready",
@@ -3364,6 +3650,10 @@ async def _handle_acceptance_options(arguments: dict) -> list:
         "fail_count": fail_count,
         "warning_count": warning_count,
         "output_required": True,
+        "display": {
+            "title": "🏁 验收决策面板",
+            "content": "\n".join(display_lines),
+        },
         "message": f"✅ 验收选项已准备：{len(deliverables)} 个交付物，{pass_count} 通过，{fail_count} 失败，{warning_count} 警告"
     }
 

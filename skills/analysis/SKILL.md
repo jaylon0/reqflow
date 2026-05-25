@@ -214,19 +214,19 @@ reqflow_discussion_round(
 | 技术方案 | `tech-plan`, `security-audit`, `impact-analysis` | 方案设计、安全评估、影响分析 |
 | 实施计划 | `test-gen` | 生成测试用例 |
 | Agent执行 | `debug`, `refactor` | 调试问题、重构代码 |
-| 代码审查 | `code-review`, `security-audit` | 代码审查、安全检查 |
-| 交付验证 | `delivery-check`, `test-gen` | 交付验证、测试补充 |
+| 代码审查 | `code-review`, `security-audit`, `vuln-scan`, `code-quality`, `adversarial-review` | 代码审查、安全扫描、质量检查、对抗性审查 |
+| 交付验证 | `delivery-check`, `test-gen`, `test-coverage` | 交付验证、测试补充、覆盖率分析 |
 | 总结 | `write-docs`, `retro` | 文档撰写、复盘分析 |
 
 ---
 
 ## ⛔ MCP 工具与对话输出分离规则
 
-**核心原则：MCP 返回值是内部状态，不是给用户看的。Agent 必须在对话中生成完整报告。**
+**核心原则：MCP 返回的 `display` 字段包含格式化内容，必须在对话中展示给用户。**
 
 ### 强制约束
 
-1. **MCP 返回值不得直接展示** — `reqflow_stage_report`、`reqflow_dispatch_agent` 返回的是 JSON 状态，不是格式化报告
+1. **MCP 返回的 `display` 字段必须在对话中展示** — `reqflow_stage_report`、`reqflow_dispatch_agent` 等工具返回的 JSON 中包含 `display` 字段（含 `title` 和 `content`），Agent 必须将 `display.content` 的内容在对话中输出
 2. **Agent 必须在对话中生成报告** — 根据 MCP 输入参数和返回状态，在对话中输出完整的格式化报告
 3. **MCP 返回值中的 `output_required: true`** — 表示 agent 必须在对话中输出内容
 
