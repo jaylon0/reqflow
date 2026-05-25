@@ -1,7 +1,7 @@
-# workflows/main-flow.yaml
-name: main-flow
+# workflows/auto-flow.yaml
+name: auto-flow
 version: 7.0
-description: L3 完整交付流程
+description: L1/L2 自动流程
 
 stages:
   - id: analysis
@@ -9,19 +9,12 @@ stages:
     agents:
       - role: research-agent
         task: 调研需求背景、竞品方案
-      - role: architecture-agent
-        task: 分析现有架构、评估影响
-      - role: security-agent
-        task: 评估安全风险、合规要求
     workers:
       - role: code-search-agent
-        task: 搜索相关代码、文档、配置
-      - role: test-search-agent
-        task: 搜索现有测试用例
+        task: 搜索相关代码
     discussion:
-      min_rounds: 2
-      convergence_threshold: 0.8
-    gates: [prd-gate, spec-gate]
+      min_rounds: 1
+      convergence_threshold: 0.7
 
   - id: discovery
     skill: discovery
@@ -31,8 +24,6 @@ stages:
     workers:
       - role: file-scanner-agent
         task: 扫描项目文件结构
-      - role: dependency-agent
-        task: 分析依赖关系
     discussion:
       min_rounds: 1
       convergence_threshold: 0.7
@@ -42,50 +33,33 @@ stages:
     agents:
       - role: architecture-agent
         task: 架构选型、接口设计
-      - role: security-agent
-        task: 安全架构评审
-      - role: performance-agent
-        task: 性能影响评估
     workers:
       - role: code-search-agent
         task: 搜索相关实现
-      - role: api-scanner-agent
-        task: 扫描现有 API
     discussion:
-      min_rounds: 2
-      convergence_threshold: 0.8
-    gates: [tech-gate]
+      min_rounds: 1
+      convergence_threshold: 0.7
 
   - id: execution
     skill: execution
     agents:
       - role: dev-agent
         task: 代码实现
-      - role: test-gen-agent
-        task: 测试生成
     workers:
-      - role: code-search-agent
-        task: 搜索相关代码
       - role: build-agent
         task: 执行构建和测试
     discussion:
       min_rounds: 1
       convergence_threshold: 0.7
-    gates: [code-gate]
 
   - id: delivery
     skill: delivery
     agents:
       - role: test-gen-agent
         task: 验证测试
-      - role: doc-agent
-        task: 文档更新
     workers:
       - role: build-agent
         task: 执行构建验证
-      - role: deploy-agent
-        task: 执行部署验证
     discussion:
       min_rounds: 1
-      convergence_threshold: 0.8
-    gates: [delivery-gate]
+      convergence_threshold: 0.7
