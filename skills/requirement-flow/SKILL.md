@@ -210,6 +210,10 @@ reqflow_verify(run_id="<run-id>", gate="completion-gate", evidence={...})
 | `reqflow_acceptance_options` | 生成验收选项 | ✅ 验收时 |
 | `reqflow_artifact_register` | 注册生成的产物 | ✅ 生成产物时 |
 | `reqflow_artifact_check` | 检查产物完整性 | ✅ 归档前 |
+| `reqflow_debate` | 启动结构化辩论 | ✅ 关键阶段 |
+| `reqflow_debate_round` | 记录辩论轮次 | ✅ 每轮辩论 |
+| `reqflow_debate_conclude` | 总结辩论共识 | ✅ 辩论结束 |
+| `reqflow_cross_validate` | 交叉验证 | ✅ 关键决策 |
 
 ### ⛔ Agent 派遣确认流程
 
@@ -248,6 +252,35 @@ reqflow_discussion_round(
     round=1,
     agents=["agent1", "agent2"]
 )
+```
+
+### ⛔ 关键阶段结构化辩论要求
+
+以下关键阶段必须启动 **结构化辩论**，通过角色化对抗讨论提高决策质量：
+
+| 关键阶段 | 辩论角色 | 最少轮次 |
+|----------|----------|----------|
+| PRD理解 | 乐观派 + 悲观派 + 务实派 | 2 轮 |
+| 技术方案 | 乐观派 + 悲观派 + 务实派 + 批评者 | 2 轮 |
+| 代码审查 | 悲观派 + 批评者 | 2 轮 |
+| 交付验证 | 悲观派 + 批评者 + 务实派 | 2 轮 |
+
+**辩论流程：**
+
+```
+① reqflow_debate(stage="技术方案", topic="架构选型")
+    → 返回 debate_id, 角色分配
+    ↓
+② 派遣 Agent 执行辩论（至少 2 轮）
+    每轮调用 reqflow_debate_round 记录:
+    reqflow_debate_round(
+        debate_id="<debate_id>",
+        round=1,
+        arguments={"optimist": "...", "pessimist": "...", ...}
+    )
+    ↓
+③ reqflow_debate_conclude(debate_id="<debate_id>")
+    → 返回共识结论, 加权投票结果, 置信度
 ```
 
 ### 辅助 Skill 调用指引
@@ -397,6 +430,10 @@ reqflow_discussion_round(
 📡 reqflow_report(stage="PRD理解") → ✅ 已记录 (阶段 2/11, 18%)
 📡 reqflow_verify(gate="tdd-gate") → ❌ 未通过: failing_tests_count 缺失
 🔧 修复计划: 编写失败测试后重新提交
+📡 reqflow_debate(stage="技术方案", topic="架构选型") → 🎭 辩论启动 (4 角色)
+📡 reqflow_debate_round(debate_id="xxx", round=1) → ✅ 第 1 轮记录
+📡 reqflow_debate_conclude(debate_id="xxx") → ✅ 共识达成 (置信度: 85%)
+📡 reqflow_cross_validate(task="xxx") → ✅ 交叉验证完成 (一致性: 0.92)
 ```
 
 ⛔ **禁止静默调用 MCP 工具不输出。**
@@ -430,6 +467,11 @@ reqflow_discussion_round(
 - **每个阶段必须输出完整阶段报告（含确认面板）**
 - **每个阶段必须验证产物文件存在性**
 - **所有阶段完成后必须展示验收决策面板（4 选项）**
+- **不得跳过关键阶段的结构化辩论 — PRD理解/技术方案/代码审查/交付验证必须启动辩论**
+- **不得跳过 reqflow_debate 调用 — 辩论启动时必须记录**
+- **不得跳过 reqflow_debate_round 调用 — 每轮辩论必须记录**
+- **不得跳过 reqflow_debate_conclude 调用 — 辩论结束时必须总结**
+- **不得跳过交叉验证 — 关键决策必须使用 reqflow_cross_validate**
 
 ## 输出格式
 

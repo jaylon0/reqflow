@@ -184,6 +184,35 @@ reqflow_artifact_check(run_id="<run_id>")
 
 如果有缺失产物，必须补齐后才能继续。
 
+### ⛔ 关键阶段必须启动结构化辩论
+
+对于关键阶段（PRD理解、技术方案、代码审查、交付验证），⛔ **必须** 启动结构化辩论：
+
+```
+reqflow_debate(stage="技术方案", topic="架构选型")
+```
+
+辩论过程中每轮必须记录：
+
+```
+reqflow_debate_round(debate_id="<id>", round=1, arguments={...})
+```
+
+辩论结束时必须总结：
+
+```
+reqflow_debate_conclude(debate_id="<id>")
+```
+
+**辩论角色分配：**
+
+| 关键阶段 | 辩论角色 | 最少轮次 |
+|----------|----------|----------|
+| PRD理解 | 乐观派 + 悲观派 + 务实派 | 2 轮 |
+| 技术方案 | 乐观派 + 悲观派 + 务实派 + 批评者 | 2 轮 |
+| 代码审查 | 悲观派 + 批评者 | 2 轮 |
+| 交付验证 | 悲观派 + 批评者 + 务实派 | 2 轮 |
+
 ---
 
 ## ⛔ MCP 工具与对话输出分离规则
@@ -319,6 +348,10 @@ reqflow_artifact_check(run_id="<run_id>")
 📡 reqflow_report(stage="PRD理解") → ✅ 已记录 (阶段 2/11, 18%)
 📡 reqflow_verify(gate="tdd-gate") → ❌ 未通过: failing_tests_count 缺失
 🔧 修复计划: 编写失败测试后重新提交
+📡 reqflow_debate(stage="技术方案", topic="架构选型") → 🎭 辩论启动 (4 角色)
+📡 reqflow_debate_round(debate_id="xxx", round=1) → ✅ 第 1 轮记录
+📡 reqflow_debate_conclude(debate_id="xxx") → ✅ 共识达成 (置信度: 85%)
+📡 reqflow_cross_validate(task="xxx") → ✅ 交叉验证完成 (一致性: 0.92)
 ```
 
 ⛔ **禁止静默调用 MCP 工具不输出。**
@@ -530,6 +563,11 @@ reqflow_full_flow(requirement="<需求描述>", auto_pilot=true)
 - **不得跳过 reqflow_acceptance_options 调用 — 验收时必须生成选项**
 - **不得跳过 reqflow_artifact_register 调用 — 生成产物时必须注册**
 - **不得跳过 reqflow_artifact_check 调用 — 归档前必须检查完整性**
+- **不得跳过关键阶段的结构化辩论 — PRD理解/技术方案/代码审查/交付验证必须启动辩论**
+- **不得跳过 reqflow_debate 调用 — 辩论启动时必须记录**
+- **不得跳过 reqflow_debate_round 调用 — 每轮辩论必须记录**
+- **不得跳过 reqflow_debate_conclude 调用 — 辩论结束时必须总结**
+- **不得跳过交叉验证 — 关键决策必须使用 reqflow_cross_validate**
 
 ## 沟通语言
 
