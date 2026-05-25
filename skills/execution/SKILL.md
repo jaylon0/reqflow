@@ -141,8 +141,8 @@ reqflow_discussion_round(
 | 技术方案 | `tech-plan`, `security-audit`, `impact-analysis` | 方案设计、安全评估、影响分析 |
 | 实施计划 | `test-gen` | 生成测试用例 |
 | Agent执行 | `debug`, `refactor` | 调试问题、重构代码 |
-| 代码审查 | `code-review`, `security-audit` | 代码审查、安全检查 |
-| 交付验证 | `delivery-check`, `test-gen` | 交付验证、测试补充 |
+| 代码审查 | `code-review`, `security-audit`, `vuln-scan`, `code-quality`, `adversarial-review` | 代码审查、安全扫描、质量检查、对抗性审查 |
+| 交付验证 | `delivery-check`, `test-gen`, `test-coverage` | 交付验证、测试补充、覆盖率分析 |
 | 总结 | `write-docs`, `retro` | 文档撰写、复盘分析 |
 
 ### 生成产物时必须注册
@@ -183,7 +183,7 @@ reqflow_discussion_round(
 
 ## ⛔ MCP 工具与对话输出分离规则
 
-**核心原则：MCP 返回值是内部状态，不是给用户看的。Agent 必须在对话中生成完整报告。**
+**核心原则：MCP 返回的 `display` 字段包含格式化内容，必须在对话中展示给用户。**
 
 ### 对话输出模板
 
