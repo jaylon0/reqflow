@@ -1,6 +1,6 @@
 {
   "name": "reqflow",
-  "version": "2.0.0",
+  "version": "3.1.0",
   "description": "ReqFlow 工作流编排引擎 MCP Server",
   "transport": "stdio",
   "command": "python3",
@@ -50,6 +50,126 @@
     {
       "name": "reqflow_guardrails",
       "description": "约束检查"
+    },
+    {
+      "name": "reqflow_health",
+      "description": "健康检查"
+    },
+    {
+      "name": "reqflow_plan",
+      "description": "开始新计划（路由分析、上下文扫描）"
+    },
+    {
+      "name": "reqflow_report",
+      "description": "报告阶段完成状态"
+    },
+    {
+      "name": "reqflow_verify",
+      "description": "门禁验证（TDD、设计、完成度）"
+    },
+    {
+      "name": "reqflow_accept",
+      "description": "用户验收通过"
+    },
+    {
+      "name": "reqflow_reject",
+      "description": "用户验收拒绝"
+    },
+    {
+      "name": "reqflow_tool_call",
+      "description": "工具调用记录"
+    },
+    {
+      "name": "reqflow_memory_save",
+      "description": "保存长期记忆"
+    },
+    {
+      "name": "reqflow_memory_load",
+      "description": "加载长期记忆"
+    },
+    {
+      "name": "reqflow_git_check",
+      "description": "检查 Git 状态"
+    },
+    {
+      "name": "reqflow_blocker_add",
+      "description": "添加 BLOCKER"
+    },
+    {
+      "name": "reqflow_blocker_resolve",
+      "description": "解决 BLOCKER"
+    },
+    {
+      "name": "reqflow_blocker_check",
+      "description": "检查 BLOCKER 状态"
+    },
+    {
+      "name": "reqflow_multi_repo_switch",
+      "description": "多仓库切换"
+    },
+    {
+      "name": "reqflow_acceptance_update",
+      "description": "更新验收标准状态"
+    },
+    {
+      "name": "reqflow_artifact_register",
+      "description": "注册生成的产物文件"
+    },
+    {
+      "name": "reqflow_artifact_check",
+      "description": "检查产物完整性"
+    },
+    {
+      "name": "reqflow_full_flow",
+      "description": "强制全流程入口（L3）"
+    },
+    {
+      "name": "reqflow_brainstorm",
+      "description": "多 Agent 头脑风暴"
+    },
+    {
+      "name": "reqflow_confidence",
+      "description": "置信度评估"
+    },
+    {
+      "name": "reqflow_stage_report",
+      "description": "生成结构化阶段报告（含置信度校准）"
+    },
+    {
+      "name": "reqflow_dispatch_agent",
+      "description": "注册 Agent 派遣意图"
+    },
+    {
+      "name": "reqflow_agent_confirm",
+      "description": "确认 Agent 实际派遣完成"
+    },
+    {
+      "name": "reqflow_acceptance_options",
+      "description": "生成验收选项面板"
+    },
+    {
+      "name": "reqflow_discussion_round",
+      "description": "记录讨论轮次"
+    },
+    {
+      "name": "reqflow_consensus",
+      "description": "记录共识结论"
+    },
+    {
+      "name": "reqflow_cross_validate",
+      "description": "多 Agent 交叉验证（一致性检测）"
+    },
+    {
+      "name": "reqflow_debate",
+      "description": "启动结构化辩论（角色化对抗讨论）"
+    },
+    {
+      "name": "reqflow_debate_round",
+      "description": "记录辩论轮次（各角色观点）"
+    },
+    {
+      "name": "reqflow_debate_conclude",
+      "description": "总结辩论共识（加权投票、稳定性检测）"
     }
   ]
 }
