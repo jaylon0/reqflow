@@ -214,6 +214,7 @@ reqflow_verify(run_id="<run-id>", gate="completion-gate", evidence={...})
 | `reqflow_debate_round` | 记录辩论轮次 | ✅ 每轮辩论 |
 | `reqflow_debate_conclude` | 总结辩论共识 | ✅ 辩论结束 |
 | `reqflow_cross_validate` | 交叉验证 | ✅ 关键决策 |
+| `reqflow_skill_invoke` | 记录 Skill 调用 | ✅ 调用 Skill 时 |
 
 ### ⛔ Agent 派遣确认流程
 
@@ -328,6 +329,34 @@ reqflow_discussion_round(
 | 代码审查 | `code-review`, `security-audit`, `vuln-scan`, `code-quality`, `adversarial-review` | 代码审查、安全扫描、质量检查、对抗性审查 |
 | 交付验证 | `delivery-check`, `test-gen`, `test-coverage` | 交付验证、测试补充、覆盖率分析 |
 | 总结 | `write-docs`, `retro` | 文档撰写、复盘分析 |
+
+### ⛔ Skill 调用追踪要求
+
+每次调用 Skill（无论是宿主 Agent 还是 subagent），⛔ **必须** 调用 `reqflow_skill_invoke` 记录：
+
+```
+reqflow_skill_invoke(
+    run_id="<run_id>",
+    stage="<阶段名称>",
+    skill_name="<Skill 名称>",
+    invoked_by="host",  # host 或 subagent
+    agent_role="",  # 如果是 subagent 调用，填写 agent 角色
+    context="为什么调用这个 Skill",
+    result_summary="Skill 执行结果摘要"
+)
+```
+
+**追踪要求：**
+1. **宿主 Agent 调用 Skill** — 必须记录，invoked_by="host"
+2. **Subagent 调用 Skill** — 必须记录，invoked_by="subagent"，agent_role="对应角色"
+3. **Skill 调用日志** — 在对话中输出详细的 Skill 调用过程和结果
+
+**示例：**
+```
+📚 reqflow_skill_invoke(skill_name="prd-review", invoked_by="host")
+   → Skill 调用已记录：prd-review (由宿主 Agent 在 PRD理解 阶段调用)
+   → 宿主 Agent 必须在对话中描述：为什么调用、执行过程、关键发现
+```
 
 ## ⛔ MCP 工具与对话输出分离规则
 
