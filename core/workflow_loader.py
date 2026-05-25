@@ -44,11 +44,92 @@ class WorkflowLoader:
         path = self.workflows_dir / f"{name}.yaml"
         if not path.exists():
             raise FileNotFoundError(f"Workflow file not found: {path}")
+        return self.load_workflow(str(path))
+
+    def load_workflow(self, workflow_path: str) -> dict[str, Any]:
+        """Load and validate a workflow definition from a full file path.
+
+        Validates required fields: name, version, stages.
+        Validates each stage has: id, skill.
+
+        Args:
+            workflow_path: Absolute or relative path to the workflow YAML file.
+
+        Returns:
+            Parsed workflow definition dict.
+
+        Raises:
+            FileNotFoundError: If the workflow YAML file does not exist.
+            ValueError: If required fields are missing or invalid.
+        """
+        path = Path(workflow_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Workflow file not found: {path}")
         with open(path, "r", encoding="utf-8") as f:
             definition = yaml.safe_load(f)
         if not isinstance(definition, dict):
             raise ValueError(f"Workflow file must contain a YAML mapping, got {type(definition).__name__}")
+
+        # Validate required top-level fields
+        for field in ("name", "version", "stages"):
+            if field not in definition:
+                raise ValueError(f"Workflow missing required field: {field}")
+
+        # Validate stages
+        stages = definition["stages"]
+        if not isinstance(stages, list):
+            raise ValueError(f"'stages' must be a list, got {type(stages).__name__}")
+        for i, stage in enumerate(stages):
+            if not isinstance(stage, dict):
+                raise ValueError(f"Stage {i} must be a dict, got {type(stage).__name__}")
+            if "id" not in stage:
+                raise ValueError(f"Stage {i} missing required field: id")
+            # Accept either 'skill' (new format) or 'type' (legacy format)
+            if "skill" not in stage and "type" not in stage:
+                raise ValueError(f"Stage {i} missing required field: skill or type")
+
         return definition
+
+    def load_routing(self, routing_path: str) -> dict[str, Any]:
+        """Load and validate a routing configuration from a full file path.
+
+        Validates 'routing' section exists and each level has:
+        description, trigger, workflow, stages.
+
+        Args:
+            routing_path: Absolute or relative path to the routing YAML file.
+
+        Returns:
+            Parsed routing configuration dict.
+
+        Raises:
+            FileNotFoundError: If the routing YAML file does not exist.
+            ValueError: If required fields are missing or invalid.
+        """
+        path = Path(routing_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Routing file not found: {path}")
+        with open(path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+        if not isinstance(config, dict):
+            raise ValueError(f"Routing file must contain a YAML mapping, got {type(config).__name__}")
+
+        if "routing" not in config:
+            raise ValueError("Routing file missing required 'routing' section")
+
+        routing = config["routing"]
+        if not isinstance(routing, dict):
+            raise ValueError(f"'routing' must be a dict, got {type(routing).__name__}")
+
+        # Validate each routing level
+        for level_name, level_config in routing.items():
+            if not isinstance(level_config, dict):
+                raise ValueError(f"Routing level '{level_name}' must be a dict")
+            for field in ("description", "trigger", "workflow", "stages"):
+                if field not in level_config:
+                    raise ValueError(f"Routing level '{level_name}' missing required field: {field}")
+
+        return config
 
     def get_stages(self, name: str) -> list[dict[str, Any]]:
         """Get workflow stages as a list compatible with Engine.run_workflow.
@@ -307,6 +388,16 @@ class WorkflowLoader:
             step["agent"] = stage["agent"]
         if "agent_coordination" in stage:
             step["agent_coordination"] = stage["agent_coordination"]
+
+        # Modular skill fields
+        if "agents" in stage:
+            step["agents"] = stage["agents"]
+        if "workers" in stage:
+            step["workers"] = stage["workers"]
+        if "discussion" in stage:
+            step["discussion"] = stage["discussion"]
+        if "gates" in stage:
+            step["gates"] = stage["gates"]
 
         return step
 

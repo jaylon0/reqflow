@@ -1,0 +1,34 @@
+# workflows/requirement-flow.yaml
+name: requirement-flow
+version: 7.0
+description: L0-L3 路由配置
+
+routing:
+  L0:
+    description: 只读分析
+    trigger: 分析/评估/解释类请求
+    workflow: auto-flow.yaml
+    stages: [analysis, discovery]
+    max_stages: 2
+
+  L1:
+    description: 轻量修改
+    trigger: 单文件低风险修复
+    workflow: auto-flow.yaml
+    stages: [analysis, discovery, execution]
+    max_stages: 3
+
+  L2:
+    description: 计划性修改
+    trigger: 多文件功能开发
+    workflow: auto-flow.yaml
+    stages: [analysis, discovery, planning, execution, delivery]
+    max_stages: 5
+
+  L3:
+    description: 完整交付
+    trigger: API/DB/安全/部署变更
+    workflow: main-flow.yaml
+    stages: [analysis, discovery, planning, execution, delivery]
+    max_stages: 5
+    full_version: true
