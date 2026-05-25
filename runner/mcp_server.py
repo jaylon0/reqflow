@@ -2965,6 +2965,34 @@ async def _handle_stage_report(arguments: dict) -> list:
                         agent_status["pending"].append(agent_role)
                         agent_warnings.append(f"⚠️ {agent_role} 状态={status}，未完成")
 
+    # 检查讨论轮次（关键阶段至少 2 轮）
+    _CRITICAL_STAGES = {"PRD理解", "技术方案", "代码审查", "交付验证"}
+    discussion_check = {"required": False, "rounds": 0, "minimum": 0, "passed": True}
+    if stage_name in _CRITICAL_STAGES and run_dir:
+        discussion_check["required"] = True
+        discussion_check["minimum"] = 2
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            discussion_key = f"discussion_{stage_name}"
+            discussions = state.get(discussion_key, [])
+            discussion_check["rounds"] = len(discussions)
+            if len(discussions) < 2:
+                discussion_check["passed"] = False
+                agent_warnings.append(f"⚠️ 关键阶段 {stage_name} 讨论不足 2 轮（当前 {len(discussions)} 轮）")
+
+    # 推荐辅助 skill
+    _AUXILIARY_SKILL_MAP = {
+        "PRD理解": ["prd-review"],
+        "技术方案": ["tech-plan", "security-audit", "impact-analysis"],
+        "实施计划": ["test-gen"],
+        "Agent执行": ["debug", "refactor"],
+        "代码审查": ["code-review", "security-audit"],
+        "交付验证": ["delivery-check", "test-gen"],
+        "总结": ["write-docs", "retro"],
+    }
+    recommended_skills = _AUXILIARY_SKILL_MAP.get(stage_name, [])
+
     # 计算趋势
     trend = None
     if previous_confidence is not None:
@@ -2984,6 +3012,8 @@ async def _handle_stage_report(arguments: dict) -> list:
         "required_agents": required_agents,
         "agent_status": agent_status,
         "agent_warnings": agent_warnings,
+        "discussion_check": discussion_check,
+        "recommended_skills": recommended_skills,
         "output_required": True,
         "visualization": {
             "confidence_bar": _generate_confidence_bar(confidence_score),
