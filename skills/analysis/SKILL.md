@@ -348,9 +348,7 @@ Worker 结果传递给主 Agent，开始讨论：
 
 - `dispatcher` — 调度器，路由分析和工作流加载
 - `discovery` — 上下文发现阶段
-- `planning` — 技术方案阶段
-- `execution` — Agent 执行阶段
-- `delivery` — 交付验证阶段
+- `prd-review` — 独立 PRD 审查（可单独使用）
 
 ## 强制规则
 

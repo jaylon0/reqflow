@@ -216,10 +216,12 @@ reqflow_plan(requirement="<需求描述>")
 
 ## 相关 Skills
 
-- `analysis` — 需求分析阶段
-- `discovery` — 上下文发现阶段
 - `planning` — 技术方案阶段
 - `delivery` — 交付验证阶段
+- `debug` — 独立调试排查（可单独使用）
+- `code-review` — 独立代码审查（可单独使用）
+- `test-gen` — 独立测试生成（可单独使用）
+- `refactor` — 独立代码重构（可单独使用）
 
 ## 强制规则
 

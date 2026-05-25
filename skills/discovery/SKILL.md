@@ -214,8 +214,8 @@ reqflow_plan(requirement="<需求描述>")
 
 - `analysis` — 需求分析阶段
 - `planning` — 技术方案阶段
-- `execution` — Agent 执行阶段
-- `delivery` — 交付验证阶段
+- `impact-analysis` — 独立影响分析（可单独使用）
+- `dep-audit` — 独立依赖审计（可单独使用）
 
 ## 强制规则
 

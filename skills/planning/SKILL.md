@@ -220,10 +220,11 @@ reqflow_plan(requirement="<需求描述>")
 
 ## 相关 Skills
 
-- `analysis` — 需求分析阶段
 - `discovery` — 上下文发现阶段
 - `execution` — Agent 执行阶段
-- `delivery` — 交付验证阶段
+- `tech-plan` — 独立技术方案（可单独使用）
+- `security-audit` — 独立安全审计（可单独使用）
+- `perf-analysis` — 独立性能分析（可单独使用）
 
 ## 强制规则
 
