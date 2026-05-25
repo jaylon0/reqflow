@@ -867,6 +867,85 @@ compliance-report:
             "required": ["run_id", "stage", "task_id", "validations"],
         },
     },
+    {
+        "name": "reqflow_debate",
+        "description": "启动结构化对抗辩论。多角色 Agent 针对议题进行辩论，通过对抗式交流达成深度共识。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "stage": {"type": "string", "description": "当前阶段名称"},
+                "topic": {"type": "string", "description": "辩论议题"},
+                "agents": {
+                    "type": "array",
+                    "description": "参与辩论的 Agent 角色",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "enum": ["optimist", "pessimist", "pragmatist", "critic"], "description": "角色类型"},
+                            "agent": {"type": "string", "description": "Agent 名称"},
+                        },
+                        "required": ["role"],
+                    },
+                },
+                "max_rounds": {"type": "integer", "description": "最大辩论轮次", "default": 3},
+            },
+            "required": ["run_id", "stage", "topic"],
+        },
+    },
+    {
+        "name": "reqflow_debate_round",
+        "description": "记录辩论轮次。收集各角色 Agent 的观点，检测稳定性。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "debate_id": {"type": "string", "description": "辩论 ID"},
+                "round": {"type": "integer", "description": "轮次编号"},
+                "opinions": {
+                    "type": "array",
+                    "description": "各角色的观点",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "description": "角色类型"},
+                            "conclusion": {"type": "string", "description": "结论"},
+                            "confidence": {"type": "number", "description": "置信度 (0.0-1.0)"},
+                            "reasoning": {"type": "string", "description": "推理过程"},
+                        },
+                        "required": ["role", "conclusion", "confidence"],
+                    },
+                },
+            },
+            "required": ["run_id", "debate_id", "round", "opinions"],
+        },
+    },
+    {
+        "name": "reqflow_debate_conclude",
+        "description": "结束辩论，生成最终共识。基于加权投票确定胜出结论。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "运行 ID"},
+                "debate_id": {"type": "string", "description": "辩论 ID"},
+                "final_consensus": {"type": "string", "description": "最终共识内容"},
+                "dissenting_opinions": {
+                    "type": "array",
+                    "description": "保留的异议",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "description": "角色类型"},
+                            "opinion": {"type": "string", "description": "异议内容"},
+                            "confidence": {"type": "number", "description": "置信度"},
+                        },
+                        "required": ["role", "opinion"],
+                    },
+                },
+            },
+            "required": ["run_id", "debate_id", "final_consensus"],
+        },
+    },
 ]
 
 
@@ -3019,6 +3098,133 @@ _STAGE_PARALLEL_GROUPS: dict[str, list[list[str]]] = {
 # 关键阶段定义（需要至少 2 轮讨论）
 _CRITICAL_STAGES = {"PRD理解", "技术方案", "代码审查", "交付验证"}
 
+# 结构化辩论角色定义
+DEBATE_ROLES = {
+    "optimist": {
+        "name": "乐观派",
+        "persona": "你是一个乐观的分析师，擅长发现机会和优势。你的任务是从积极角度分析问题，提出创新方案。即使面对批评，也要寻找其中的积极面。",
+        "focus": ["机会", "优势", "创新", "可能性"],
+        "bias": "倾向于积极方案和大胆尝试",
+        "icon": "🌟",
+    },
+    "pessimist": {
+        "name": "悲观派",
+        "persona": "你是一个谨慎的风险分析师，擅长发现问题和隐患。你的任务是从消极角度审视方案，找出潜在风险和失败点。不要轻易被乐观言论说服。",
+        "focus": ["风险", "问题", "隐患", "失败案例"],
+        "bias": "倾向于保守方案和风险规避",
+        "icon": "⚠️",
+    },
+    "pragmatist": {
+        "name": "务实派",
+        "persona": "你是一个务实的工程师，关注可行性和效率。你的任务是评估方案的实施难度、资源需求和时间成本。只推荐切实可行的方案。",
+        "focus": ["可行性", "效率", "资源", "时间"],
+        "bias": "倾向于平衡方案和渐进改进",
+        "icon": "🔧",
+    },
+    "critic": {
+        "name": "批评者",
+        "persona": "你是一个严格的审查员，专门寻找方案的缺陷和漏洞。你的任务是质疑每个假设、挑战每个结论、找出逻辑漏洞。你的存在是为了防止群体思维。",
+        "focus": ["缺陷", "漏洞", "假设", "逻辑"],
+        "bias": "倾向于质疑和深入审查",
+        "icon": "🔍",
+    },
+}
+
+# 辩论阶段到角色的映射
+_STAGE_DEBATE_ROLES = {
+    "PRD理解": ["optimist", "pessimist", "pragmatist"],
+    "技术方案": ["optimist", "pessimist", "pragmatist", "critic"],
+    "代码审查": ["pragmatist", "critic"],
+    "交付验证": ["optimist", "pessimist", "critic"],
+}
+
+
+def _detect_stability(consensus_history: list, threshold: float = 0.15) -> bool:
+    """
+    检测辩论是否已稳定（观点不再显著变化）。
+    使用关键词重叠度计算语义相似度。
+    """
+    if len(consensus_history) < 2:
+        return False
+
+    current = consensus_history[-1]
+    previous = consensus_history[-2]
+
+    # 简单实现：基于关键词重叠度
+    current_words = set(current.lower().split())
+    previous_words = set(previous.lower().split())
+
+    # 移除停用词
+    stopwords = {"的", "是", "在", "了", "和", "与", "或", "但", "而", "也", "都", "就", "不", "有", "这", "那", "我", "你", "他", "她", "它", "们", "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "can", "shall"}
+    current_words -= stopwords
+    previous_words -= stopwords
+
+    if not current_words or not previous_words:
+        return False
+
+    overlap = len(current_words & previous_words)
+    total = len(current_words | previous_words)
+
+    similarity = overlap / total if total > 0 else 0
+    change = 1 - similarity
+
+    return change < threshold
+
+
+def _weighted_vote(opinions: list) -> dict:
+    """
+    基于置信度的加权投票。
+    每个 Agent 的投票权重 = 其置信度
+    """
+    vote_scores = {}
+
+    for opinion in opinions:
+        conclusion = opinion.get("conclusion", "")
+        confidence = opinion.get("confidence", 0.5)
+
+        if conclusion not in vote_scores:
+            vote_scores[conclusion] = 0
+
+        vote_scores[conclusion] += confidence
+
+    if not vote_scores:
+        return {"winner": "无共识", "score": 0, "all_votes": {}, "consensus_level": 0}
+
+    # 找到最高分的结论
+    winner = max(vote_scores.items(), key=lambda x: x[1])
+    total_score = sum(vote_scores.values())
+
+    return {
+        "winner": winner[0],
+        "score": winner[1],
+        "all_votes": vote_scores,
+        "consensus_level": winner[1] / total_score if total_score > 0 else 0,
+    }
+
+
+def _enforce_dissent(opinions: list) -> list:
+    """
+    如果所有 Agent 意见一致，强制要求至少一个 Agent 提出反对意见。
+    防止从众效应，确保方案经过充分审视。
+    """
+    if not opinions:
+        return opinions
+
+    conclusions = [o.get("conclusion", "") for o in opinions]
+
+    # 如果所有结论相同
+    if len(set(conclusions)) == 1:
+        # 选择最后一个 Agent 作为"魔鬼代言人"
+        dissent_agent = opinions[-1]
+        dissent_agent["forced_dissent"] = True
+        dissent_agent["instruction"] = (
+            f"所有 Agent 都同意: \"{conclusions[0]}\"。"
+            "作为批评者，你必须提出至少一个反对意见或潜在问题。"
+            "即使你同意主流观点，也要找出可能被忽视的风险或边界情况。"
+        )
+
+    return opinions
+
 
 async def _handle_stage_report(arguments: dict) -> list:
     """生成结构化阶段报告。"""
@@ -3942,6 +4148,290 @@ async def _handle_cross_validate(arguments: dict) -> list:
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
+async def _handle_debate(arguments: dict) -> list:
+    """
+    结构化对抗辩论。
+
+    流程：
+    1. 独立分析 — 各 Agent 独立完成任务
+    2. 观点呈现 — 展示各自结论
+    3. 对抗辩论 — 针对分歧点辩论
+    4. 共识收敛 — 检测稳定性
+    5. 最终裁决 — 加权投票
+    """
+    import uuid
+
+    run_id = arguments.get("run_id", "")
+    stage = arguments.get("stage", "")
+    topic = arguments.get("topic", "")
+    agents = arguments.get("agents", [])  # [{"role": "optimist", "agent": "research-agent"}]
+    max_rounds = arguments.get("max_rounds", 3)
+
+    # 如果没有指定 agents，使用阶段默认角色
+    if not agents:
+        default_roles = _STAGE_DEBATE_ROLES.get(stage, ["optimist", "pessimist", "critic"])
+        agents = [{"role": role, "agent": f"{role}-agent"} for role in default_roles]
+
+    # 验证角色
+    valid_roles = set(DEBATE_ROLES.keys())
+    for agent in agents:
+        if agent.get("role") not in valid_roles:
+            return [TextContent(type="text", text=json.dumps({
+                "error": f"无效的角色: {agent.get('role')}",
+                "valid_roles": list(valid_roles),
+            }, ensure_ascii=False))]
+
+    debate_id = str(uuid.uuid4())[:8]
+
+    # 记录辩论状态到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            if "debates" not in state:
+                state["debates"] = []
+            state["debates"].append({
+                "debate_id": debate_id,
+                "stage": stage,
+                "topic": topic,
+                "agents": agents,
+                "max_rounds": max_rounds,
+                "status": "started",
+                "rounds": [],
+                "consensus_history": [],
+                "started_at": __import__("datetime").datetime.now().isoformat(),
+            })
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 构建角色描述
+    role_descriptions = []
+    for agent in agents:
+        role_info = DEBATE_ROLES.get(agent["role"], {})
+        role_descriptions.append({
+            "role": agent["role"],
+            "name": role_info.get("name", agent["role"]),
+            "icon": role_info.get("icon", "❓"),
+            "persona": role_info.get("persona", ""),
+            "focus": role_info.get("focus", []),
+            "agent": agent.get("agent", ""),
+        })
+
+    # 构建 display 字段
+    display_lines = [
+        f"**议题:** {topic}",
+        f"**阶段:** {stage}",
+        f"**最大轮次:** {max_rounds}",
+        f"**辩论 ID:** `{debate_id}`",
+        "",
+        "**参与角色:**",
+    ]
+
+    for rd in role_descriptions:
+        display_lines.append(f"  - {rd['icon']} **{rd['name']}** ({rd['role']}): {rd['focus']}")
+        display_lines.append(f"    Agent: {rd['agent']}")
+
+    display_lines.append("")
+    display_lines.append("**辩论流程:**")
+    display_lines.append("1. 🔍 独立分析 — 各 Agent 独立完成任务，不看其他 Agent 的结果")
+    display_lines.append("2. 📢 观点呈现 — 收集各 Agent 的初始结论和置信度")
+    display_lines.append("3. ⚔️ 对抗辩论 — 针对分歧点进行辩论，每轮必须回应其他 Agent 的质疑")
+    display_lines.append("4. 🎯 共识收敛 — 检测稳定性，如果观点不再变化则终止")
+    display_lines.append("5. 🏛️ 最终裁决 — 基于置信度加权投票，记录最终共识")
+
+    display_lines.append("")
+    display_lines.append("**执行指引:**")
+    display_lines.append("⛔ 宿主 Agent 必须：")
+    display_lines.append("1. 派遣各角色 Agent 执行独立分析")
+    display_lines.append("2. 收集各 Agent 的结论，使用 `reqflow_debate_round` 记录每轮")
+    display_lines.append("3. 如果所有 Agent 意见一致，强制要求至少一个提出反对意见")
+    display_lines.append("4. 使用 `reqflow_debate_conclude` 记录最终共识")
+
+    # 返回结果
+    result = {
+        "status": "debate_started",
+        "debate_id": debate_id,
+        "stage": stage,
+        "topic": topic,
+        "agents": role_descriptions,
+        "max_rounds": max_rounds,
+        "output_required": True,
+        "display": {
+            "title": f"🎭 结构化辩论：{topic}",
+            "content": "\n".join(display_lines),
+        },
+        "message": f"🎭 辩论已启动：{topic} ({len(agents)} 个角色，最大 {max_rounds} 轮)"
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+async def _handle_debate_round(arguments: dict) -> list:
+    """记录辩论轮次。"""
+    import uuid
+
+    run_id = arguments.get("run_id", "")
+    debate_id = arguments.get("debate_id", "")
+    round_num = arguments.get("round", 0)
+    opinions = arguments.get("opinions", [])
+    # opinions 格式: [{"role": "optimist", "conclusion": "...", "confidence": 0.8, "reasoning": "..."}]
+
+    # 应用防从众机制
+    opinions = _enforce_dissent(opinions)
+
+    # 记录到 state.json
+    run_dir = _resolve_run_dir(run_id)
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            debates = state.get("debates", [])
+            for debate in debates:
+                if debate.get("debate_id") == debate_id:
+                    debate["rounds"].append({
+                        "round": round_num,
+                        "opinions": opinions,
+                        "timestamp": __import__("datetime").datetime.now().isoformat(),
+                    })
+                    # 更新共识历史
+                    conclusions = [o.get("conclusion", "") for o in opinions]
+                    debate["consensus_history"].append("; ".join(conclusions))
+                    break
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 检测稳定性
+    consensus_history = []
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            for debate in state.get("debates", []):
+                if debate.get("debate_id") == debate_id:
+                    consensus_history = debate.get("consensus_history", [])
+                    break
+
+    is_stable = _detect_stability(consensus_history)
+
+    # 构建 display 字段
+    display_lines = [
+        f"**辩论 ID:** `{debate_id}`",
+        f"**轮次:** {round_num}",
+        f"**稳定性:** {'✅ 已稳定' if is_stable else '🔄 未稳定'}",
+        "",
+        "**各角色观点:**",
+    ]
+
+    for opinion in opinions:
+        role_info = DEBATE_ROLES.get(opinion.get("role", ""), {})
+        icon = role_info.get("icon", "❓")
+        forced = " ⚠️ [强制异见]" if opinion.get("forced_dissent") else ""
+        display_lines.append(f"  - {icon} **{role_info.get('name', opinion.get('role', '?'))}**{forced}")
+        display_lines.append(f"    结论: {opinion.get('conclusion', '无')}")
+        display_lines.append(f"    置信度: {opinion.get('confidence', 0):.0%}")
+        if opinion.get("forced_dissent"):
+            display_lines.append(f"    指令: {opinion.get('instruction', '')}")
+
+    if is_stable:
+        display_lines.append("")
+        display_lines.append("🎯 **辩论已稳定，可以进入最终裁决阶段**")
+        display_lines.append("请调用 `reqflow_debate_conclude` 记录最终共识")
+    else:
+        display_lines.append("")
+        display_lines.append("🔄 **辩论未稳定，需要继续下一轮**")
+        display_lines.append("请派遣 Agent 继续辩论，回应其他 Agent 的质疑")
+
+    # 返回结果
+    result = {
+        "status": "round_recorded",
+        "debate_id": debate_id,
+        "round": round_num,
+        "is_stable": is_stable,
+        "opinions_count": len(opinions),
+        "output_required": True,
+        "display": {
+            "title": f"💬 辩论轮次 {round_num}",
+            "content": "\n".join(display_lines),
+        },
+        "message": f"{'🎯 辩论已稳定' if is_stable else '🔄 辩论未稳定'}：轮次 {round_num}，{len(opinions)} 个观点"
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+async def _handle_debate_conclude(arguments: dict) -> list:
+    """结束辩论，生成最终共识。"""
+    run_id = arguments.get("run_id", "")
+    debate_id = arguments.get("debate_id", "")
+    final_consensus = arguments.get("final_consensus", "")
+    dissenting_opinions = arguments.get("dissenting_opinions", [])
+    # 格式: [{"role": "critic", "opinion": "...", "confidence": 0.6}]
+
+    # 计算加权投票
+    run_dir = _resolve_run_dir(run_id)
+    all_opinions = []
+    if run_dir:
+        state_file = run_dir / "state.json"
+        if state_file.exists():
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            for debate in state.get("debates", []):
+                if debate.get("debate_id") == debate_id:
+                    # 获取最后一轮的观点
+                    if debate.get("rounds"):
+                        all_opinions = debate["rounds"][-1].get("opinions", [])
+                    debate["status"] = "concluded"
+                    debate["final_consensus"] = final_consensus
+                    debate["dissenting_opinions"] = dissenting_opinions
+                    debate["concluded_at"] = __import__("datetime").datetime.now().isoformat()
+                    break
+            state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 加权投票
+    vote_result = _weighted_vote(all_opinions)
+
+    # 构建 display 字段
+    display_lines = [
+        f"**辩论 ID:** `{debate_id}`",
+        f"**最终共识:** {final_consensus}",
+        "",
+        "**加权投票结果:**",
+        f"  - 胜出结论: {vote_result['winner']}",
+        f"  - 共识度: {vote_result['consensus_level']:.0%}",
+        "",
+        "**各结论得票:**",
+    ]
+
+    for conclusion, score in vote_result.get("all_votes", {}).items():
+        display_lines.append(f"  - {conclusion}: {score:.2f}")
+
+    if dissenting_opinions:
+        display_lines.append("")
+        display_lines.append("**保留异议:**")
+        for dissent in dissenting_opinions:
+            role_info = DEBATE_ROLES.get(dissent.get("role", ""), {})
+            icon = role_info.get("icon", "❓")
+            display_lines.append(f"  - {icon} **{role_info.get('name', dissent.get('role', '?'))}**: {dissent.get('opinion', '')}")
+
+    display_lines.append("")
+    display_lines.append("✅ **辩论已结束，共识已记录**")
+
+    # 返回结果
+    result = {
+        "status": "concluded",
+        "debate_id": debate_id,
+        "final_consensus": final_consensus,
+        "vote_result": vote_result,
+        "dissenting_opinions": dissenting_opinions,
+        "output_required": True,
+        "display": {
+            "title": f"🏛️ 辩论结论",
+            "content": "\n".join(display_lines),
+        },
+        "message": f"🏛️ 辩论已结束：共识度 {vote_result['consensus_level']:.0%}，{len(dissenting_opinions)} 项异议"
+    }
+
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
 # ---------------------------------------------------------------------------
 # 工具处理器注册表（必须在 create_server 之前定义）
 # ---------------------------------------------------------------------------
@@ -3992,6 +4482,10 @@ TOOL_HANDLERS = {
     "reqflow_consensus": _handle_consensus,
     # --- 置信度提升工具 ---
     "reqflow_cross_validate": _handle_cross_validate,
+    # --- 结构化辩论工具 ---
+    "reqflow_debate": _handle_debate,
+    "reqflow_debate_round": _handle_debate_round,
+    "reqflow_debate_conclude": _handle_debate_conclude,
 }
 
 
