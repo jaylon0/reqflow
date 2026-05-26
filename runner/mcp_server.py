@@ -329,7 +329,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "reqflow_report",
-        "description": "[DEPRECATED] 报告阶段完成状态。Agent 每完成一个阶段后调用。",
+        "description": "报告阶段完成状态。Agent 每完成一个阶段后调用。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -366,7 +366,7 @@ TOOLS: list[dict] = [
     },
     {
         "name": "reqflow_verify",
-        "description": """[DEPRECATED] 验证质量门禁。
+        "description": """验证质量门禁。
 
 gate 可选值及 evidence schema:
 
@@ -568,7 +568,7 @@ compliance-report:
     },
     {
         "name": "reqflow_artifact_register",
-        "description": "[DEPRECATED] 注册由宿主 agent 生成的产物文件。记录到 state.json 的 artifacts 列表。",
+        "description": "注册由宿主 agent 生成的产物文件。记录到 state.json 的 artifacts 列表。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -583,7 +583,7 @@ compliance-report:
     },
     {
         "name": "reqflow_artifact_check",
-        "description": "[DEPRECATED] 检查阶段产物完整性。对比 L3 预期产物清单和实际文件。",
+        "description": "检查阶段产物完整性。对比 L3 预期产物清单和实际文件。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -595,7 +595,7 @@ compliance-report:
     },
     {
         "name": "reqflow_full_flow",
-        "description": "[DEPRECATED] 强制全流程入口，跳过路由分析直接使用 L3 管线（11 阶段）",
+        "description": "强制全流程入口，跳过路由分析直接使用 L3 管线（11 阶段）",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -653,7 +653,7 @@ compliance-report:
     },
     {
         "name": "reqflow_stage_report",
-        "description": "[DEPRECATED] 验证宿主 agent 生成的阶段报告。⛔ 宿主必须先在对话中生成完整分析（含置信度、完成情况、下一步行动），再调用此工具验证。如果返回 rejected，补充缺失内容后重新调用。",
+        "description": "验证宿主 agent 生成的阶段报告。⛔ 宿主必须先在对话中生成完整分析（含置信度、完成情况、下一步行动），再调用此工具验证。如果返回 rejected，补充缺失内容后重新调用。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -695,7 +695,7 @@ compliance-report:
     },
     {
         "name": "reqflow_dispatch_agent",
-        "description": "[DEPRECATED] 注册 Agent 派遣意图。返回 dispatch_id 和角色定义。⛔ 宿主必须使用平台 subagent 能力实际派遣 Agent，然后调用 reqflow_agent_confirm 确认完成。",
+        "description": "注册 Agent 派遣意图。返回 dispatch_id 和角色定义。⛔ 宿主必须使用平台 subagent 能力实际派遣 Agent，然后调用 reqflow_agent_confirm 确认完成。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -734,7 +734,7 @@ compliance-report:
     },
     {
         "name": "reqflow_agent_confirm",
-        "description": "[DEPRECATED] 验证并确认 Agent 实际派遣完成。⛔ conclusion 必须是非空的真实结论（至少 50 字），不得写占位符。",
+        "description": "验证并确认 Agent 实际派遣完成。⛔ conclusion 必须是非空的真实结论（至少 50 字），不得写占位符。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -755,7 +755,7 @@ compliance-report:
     },
     {
         "name": "reqflow_acceptance_options",
-        "description": "[DEPRECATED] ⛔ 内部状态工具。返回值仅供 agent 内部使用，不得直接展示给用户。Agent 必须根据输入参数在对话中生成完整验收决策面板（含交付物清单、验证结果、4 选项）。",
+        "description": "⛔ 内部状态工具。返回值仅供 agent 内部使用，不得直接展示给用户。Agent 必须根据输入参数在对话中生成完整验收决策面板（含交付物清单、验证结果、4 选项）。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -784,7 +784,7 @@ compliance-report:
     },
     {
         "name": "reqflow_discussion_round",
-        "description": "[DEPRECATED] 记录讨论轮次。用于多 Agent 协作场景，记录每个讨论轮次的参与者和内容。",
+        "description": "记录讨论轮次。用于多 Agent 协作场景，记录每个讨论轮次的参与者和内容。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -821,7 +821,7 @@ compliance-report:
     },
     {
         "name": "reqflow_consensus",
-        "description": "[DEPRECATED] 记录共识结果。用于记录多轮讨论后达成的共识。",
+        "description": "记录共识结果。用于记录多轮讨论后达成的共识。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -846,7 +846,7 @@ compliance-report:
     },
     {
         "name": "reqflow_cross_validate",
-        "description": "[DEPRECATED] 多 Agent 交叉验证。收集多个 Agent 对同一任务的验证结果，计算一致性分数。高一致性 = 高置信度。",
+        "description": "多 Agent 交叉验证。收集多个 Agent 对同一任务的验证结果，计算一致性分数。高一致性 = 高置信度。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -899,7 +899,7 @@ compliance-report:
     },
     {
         "name": "reqflow_debate_round",
-        "description": "[DEPRECATED] 验证并记录辩论轮次。⛔ host_debate_analysis 必填（至少 100 字），opinions 必须包含 cross_commentary。",
+        "description": "验证并记录辩论轮次。⛔ host_debate_analysis 必填（至少 100 字），opinions 必须包含 cross_commentary。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -963,7 +963,7 @@ compliance-report:
     },
     {
         "name": "reqflow_skill_invoke",
-        "description": "[DEPRECATED] 验证并记录 Skill 调用。⛔ result_summary 必填（至少 30 字）。",
+        "description": "验证并记录 Skill 调用。⛔ result_summary 必填（至少 30 字）。",
         "inputSchema": {
             "type": "object",
             "properties": {
