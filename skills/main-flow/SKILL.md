@@ -237,9 +237,9 @@ reqflow_skill_invoke(
    → 宿主 Agent 必须在对话中描述：为什么调用、执行过程、关键发现
 ```
 
-### ⛔ 关键阶段结构化辩论要求
+### ⛔ 关键阶段结构化辩论要求（真实多 Agent 交互）
 
-以下关键阶段必须启动 **结构化辩论**，通过角色化对抗讨论提高决策质量：
+以下关键阶段必须启动 **结构化辩论**，通过真实多 Agent 交互提高决策质量：
 
 | 关键阶段 | 辩论角色 | 最少轮次 |
 |----------|----------|----------|
@@ -248,68 +248,68 @@ reqflow_skill_invoke(
 | 代码审查 | 悲观派 + 批评者 | 2 轮 |
 | 交付验证 | 悲观派 + 批评者 + 务实派 | 2 轮 |
 
-**辩论流程：**
+**真实辩论流程（必须并行派遣）：**
 
 ```
 ① reqflow_debate(stage="技术方案", topic="架构选型")
-    → 返回 debate_id, 角色分配
+    → 返回 debate_id, 角色分配, host_instruction
     ↓
-② 派遣 Agent 执行辩论（至少 2 轮）
-    每轮调用 reqflow_debate_round 记录:
-    reqflow_debate_round(
-        debate_id="<debate_id>",
-        round=1,
-        arguments={"optimist": "...", "pessimist": "...", ...}
-    )
+② ⛔ 并行派遣所有 Agent 独立分析（使用 Agent tool 并行调用）
+    收集各方结论后调用 reqflow_debate_round 记录第一轮
     ↓
-③ reqflow_debate_conclude(debate_id="<debate_id>")
-    → 返回共识结论, 加权投票结果, 置信度
+③ ⛔ 并行派遣所有 Agent 进行交叉评论
+    每个 Agent 的 prompt 必须包含其他 Agent 的结论
+    每个 Agent 必须回应其他 Agent 的结论
+    收集后调用 reqflow_debate_round 记录新一轮
+    ↓
+④ 重复③直到 is_stable=true 或达到 max_rounds
+    ↓
+⑤ reqflow_debate_conclude(debate_id="<debate_id>")
+    → 返回共识结论, 加权投票结果
 ```
 
-**辩论输出模板：**
+**⛔ 辩论轮次 opinions 格式（必须包含交叉评论）：**
 
-```
-### 🎭 结构化辩论：{topic}
-
-**阶段:** {stage_name}
-**轮次:** 2/2
-
-#### 角色观点
-| 角色 | 观点 | 置信度 |
-|------|------|--------|
-| 🌟 乐观派 | ... | 85% |
-| ⚠️ 悲观派 | ... | 78% |
-| 🔧 务实派 | ... | 82% |
-| 🔍 批评者 | ... | 75% |
-
-#### 加权共识
-- 结论: {conclusion}
-- 综合置信度: {confidence}%
-- 稳定性: {stability} (收敛/发散)
-
-#### 反群体思维
-{如有异议，强制展示不同观点}
-```
-
-### ⛔ 关键阶段必须启动结构化辩论
-
-对于关键阶段（PRD理解、技术方案、代码审查、交付验证），⛔ **必须** 启动结构化辩论：
-
-```
-reqflow_debate(stage="技术方案", topic="架构选型")
-```
-
-辩论过程中每轮必须记录：
-
-```
-reqflow_debate_round(debate_id="<id>", round=1, arguments={...})
+```python
+reqflow_debate_round(
+    debate_id="<debate_id>",
+    round=1,
+    opinions=[
+        {
+            "role": "optimist",
+            "agent": "research-agent",
+            "conclusion": "我的结论...",
+            "confidence": 0.85,
+            "reasoning": "推理过程...",
+            "cross_commentary": {
+                "pessimist": "我对悲观派结论的看法...",
+                "pragmatist": "我对务实派结论的看法..."
+            }
+        },
+        {
+            "role": "pessimist",
+            "agent": "architecture-agent",
+            "conclusion": "我的结论...",
+            "confidence": 0.78,
+            "reasoning": "推理过程...",
+            "cross_commentary": {
+                "optimist": "我对乐观派结论的看法...",
+                "pragmatist": "我对务实派结论的看法..."
+            }
+        }
+    ]
+)
 ```
 
-辩论结束时必须总结：
+**⛔ 辩论输出要求：**
 
-```
-reqflow_debate_conclude(debate_id="<id>")
-```
+宿主 Agent 必须在对话中用自己的语言描述：
+1. 各 Agent 的核心观点和分歧点
+2. 交叉评论中的关键交锋
+3. 观点演变过程
+4. 最终共识如何达成
+
+**不得只展示 MCP 返回值。**
 
 ### 验收时必须调用 `reqflow_acceptance_options`
 
@@ -469,7 +469,7 @@ session.save()
 
 ## ⛔ MCP 工具与对话输出分离规则
 
-**核心原则：MCP 返回的数据是参考信息，宿主 Agent 必须用自己的语言产出详细的真实输出。**
+**核心原则：MCP 返回的 `display` 只包含状态信息，详细内容由宿主 Agent 在对话中生成。**
 
 ### 强制约束
 
@@ -482,136 +482,33 @@ session.save()
 3. **使用 Agent 昵称** — MCP 返回的 `agent_nickname` 和 `agent_display_name` 字段提供友好昵称（如"小研"、"架构师"），在对话中必须使用昵称而非原始 agent_role
 4. **MCP 返回值中的 `output_required: true`** — 表示 agent 必须在对话中输出内容
 
-### 对话输出模板
-
-**调用 `reqflow_stage_report` 后必须输出：**
-```
-### 📋 阶段报告：{stage_name}
-
-**状态:** ✅ 完成 | ⚠️ 有警告 | ❌ 失败
-
-#### 产出清单
-| 文件 | 操作 | 存在 | 状态 |
-|------|------|------|------|
-| xxx.java | 新增 | ✅ | 通过 |
-产物完整性: 1/1 通过
-
-#### 置信度（6 维度 + Unicode 可视化）
-| 维度 | 分数 | 进度 | 热力 | 趋势 |
-|------|------|------|------|------|
-| 完整性 | 0.85 | ████████░ | 🟩 | ↑ |
-| 一致性 | 0.90 | █████████ | 🟩 | → |
-| 准确性 | 0.78 | ███████░░ | 🟨 | ↑ |
-| 可测试性 | 0.72 | ███████░░ | 🟨 | → |
-| 风险覆盖 | 0.65 | ██████░░░ | 🟧 | ↓ |
-| Spec合规 | 0.80 | ████████░ | 🟩 | ↑ |
-**综合: 0.79 (medium)**
-
-#### Agent 共识
-| Agent | 结论 | 置信度 |
-|-------|------|--------|
-| leader-agent | ... | 86% |
-| dev-agent | ... | 92% |
-
-#### MCP 执行追踪
-| 工具 | 参数 | 结果 |
-|------|------|------|
-| reqflow_report | stage="PRD理解" | ✅ |
-| reqflow_stage_report | stage_name="PRD理解" | ✅ |
-| reqflow_dispatch_agent | agent="research-agent" | ✅ |
-
-#### 问题与风险
-- [自修复] xxx（已自动修复）
-- [需确认] xxx（需要用户确认）
-- [阻塞] xxx（阻塞流程）
-
-#### 反思点
-- 本阶段决策: xxx
-- 潜在改进: xxx
-- 经验教训: xxx
-
-#### 趋势
-置信度趋势: 0.72 → 0.79 (↑0.07)
-
-#### 下一步
-...
-```
-
-**置信度可视化说明：**
-- **进度条**: `████████░` 表示 80%，`█████░░░░` 表示 50%
-- **热力图**: 🟩 (≥90%), 🟨 (≥70%), 🟧 (≥50%), 🟥 (<50%)
-- **趋势箭头**: ↑ 提升, ↓ 下降, → 持平
-
-**调用 `reqflow_dispatch_agent` 后必须输出：**
-```
-### 🤖 Agent 派遣：{agent_role}
-
-**角色定义:**
-- 名称: {name}
-- 角色: {role}
-- 能力: {capabilities}
-
-**任务描述:**
-{task_description}
-
-**派遣指引:**
-⛔ 必须使用平台的 subagent 能力派遣此 Agent：
-- Claude Code: 使用 `Agent` tool
-- Codex: 使用 subagent workflows
-- Cursor: 使用 cloud agents
-
-**Prompt 模板:**
-```
-{prompt_template}
-```
-
-**验证:**
-- 当前阶段: {stage_name}
-- 是否必须派遣: ✅ 是
-- 还有未派遣的必须 Agent: {missing_agents}
-```
-
-**调用 `reqflow_acceptance_options` 后必须输出：**
-```
-### 🏁 验收决策面板
-
-**当前状态:** 全部阶段完成，等待你的验收决定。
-
-#### 已交付产物清单
-| 文件 | 变更类型 | 验证状态 |
-|------|----------|----------|
-| xxx.java | 新增 | 编译通过 |
-
-#### 质量摘要
-- 门禁通过: 4/4
-- 置信度: 0.79 (medium)
-- P0 阻塞: 0
-- 验收标准: 1/1 verified
-
-#### 请做出决定
-| 选项 | 操作 | 后续流程 |
-|------|------|----------|
-| ✅ 通过验收 | reqflow_accept | 归档、清理、流程结束 |
-| ❌ 拒绝验收 | reqflow_reject | 修复循环（最多 3 轮） |
-| 🔧 部分验收 | reqflow_accept + scope | 部分归档 |
-| ⏸ 暂挂 | 不调用工具 | 保持状态 |
-```
-
 ### MCP 即时反馈
 
 每次调用 MCP 工具后，必须在对话中输出一行反馈：
 
 ```
 📡 reqflow_report(stage="PRD理解") → ✅ 已记录 (阶段 2/11, 18%)
-📡 reqflow_verify(gate="tdd-gate") → ❌ 未通过: failing_tests_count 缺失
-🔧 修复计划: 编写失败测试后重新提交
+📡 reqflow_dispatch_agent(stage="PRD理解", agent="research-agent") → ✅ 小研已注册
+📡 reqflow_agent_confirm(dispatch_id="xxx") → ✅ 小研已完成
+📡 reqflow_stage_report(stage="PRD理解") → 🟨 置信度 82/100
 📡 reqflow_debate(stage="技术方案", topic="架构选型") → 🎭 辩论启动 (4 角色)
-📡 reqflow_debate_round(debate_id="xxx", round=1) → ✅ 第 1 轮记录
-📡 reqflow_debate_conclude(debate_id="xxx") → ✅ 共识达成 (置信度: 85%)
-📡 reqflow_cross_validate(task="xxx") → ✅ 交叉验证完成 (一致性: 0.92)
+📡 reqflow_debate_round(debate_id="xxx", round=1) → 🔄 未稳定，3 个观点
+📡 reqflow_debate_conclude(debate_id="xxx") → 🏛️ 共识度 85%
 ```
 
 ⛔ **禁止静默调用 MCP 工具不输出。**
+
+### ⛔ 对话输出要求
+
+每次 MCP 调用后，宿主 Agent 必须在对话中用自己的语言产出详细分析，包括但不限于：
+
+1. **Agent 派遣后** — 说明为什么派遣、Agent 的任务、预期产出
+2. **Agent 确认后** — 用自己的语言描述 Agent 的工作过程和结论
+3. **阶段报告后** — 分析置信度含义、风险、下一步行动
+4. **辩论轮次后** — 描述各方观点的交锋和分歧点
+5. **辩论结束后** — 总结辩论过程、共识达成原因、保留异议价值
+
+**不得只展示 MCP 返回的 JSON。**
 
 ---
 
