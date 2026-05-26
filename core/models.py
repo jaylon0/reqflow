@@ -258,12 +258,21 @@ class RunState:
         """Total number of stages."""
         return len(self.stages)
 
-    def mark_stage_completed(self, stage_id: str) -> None:
+    def mark_stage_completed(
+        self,
+        stage_id: str,
+        output: StageOutput | None = None,
+        validation: ValidationResult | None = None,
+    ) -> None:
         """Mark a stage as completed by its ID."""
         for s in self.stages:
             if s.stage_id == stage_id:
                 s.status = "completed"
                 s.completed_at = datetime.now().isoformat()
+                if output is not None:
+                    s.output = output
+                if validation is not None:
+                    s.validation = validation
                 return
         raise ValueError(f"Stage '{stage_id}' not found")
 
