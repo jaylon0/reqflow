@@ -3416,43 +3416,9 @@ async def _handle_stage_report(arguments: dict) -> list:
     )
     calibrated_score = calibration["adjusted_score"]
 
-    # 构建 display 字段
+    # 构建 display 字段 - 只包含状态信息
     confidence_bar = _generate_confidence_bar(calibrated_score)
     confidence_heat = _get_confidence_heat(calibrated_score)
-    display_lines = [
-        f"**阶段:** {stage_name}",
-        f"**置信度:** {confidence_heat} {confidence_bar} {calibrated_score}/100",
-    ]
-    if calibration["has_significant_adjustment"]:
-        display_lines.append(f"**校准调整:** {confidence_score} → {calibrated_score} ({calibration['adjustment']:+d})")
-        display_lines.append(f"**调整原因:**")
-        for factor in calibration["calibration_factors"]:
-            display_lines.append(f"  - {factor['detail']} ({factor['impact']:+d})")
-    if trend:
-        display_lines.append(f"**趋势:** {trend['direction']} (前值: {trend['previous']})")
-    if completed_items:
-        display_lines.append(f"**完成项 ({len(completed_items)}):**")
-        for item in completed_items:
-            display_lines.append(f"  - ✅ {item}")
-    if risk_items:
-        display_lines.append(f"**风险项 ({len(risk_items)}):**")
-        for item in risk_items:
-            display_lines.append(f"  - ⚠️ {item}")
-    if artifact_verification:
-        display_lines.append(f"**产物验证:**")
-        for av in artifact_verification:
-            icon = "✅" if av.get("exists") else "❌"
-            display_lines.append(f"  - {icon} {av.get('file')}")
-    if agent_warnings:
-        display_lines.append(f"**Agent 状态:**")
-        for w in agent_warnings:
-            display_lines.append(f"  - {w}")
-    if recommended_skills:
-        display_lines.append(f"**推荐辅助 Skill:** {', '.join(recommended_skills)}")
-    if next_steps:
-        display_lines.append(f"**下一步:**")
-        for step in next_steps:
-            display_lines.append(f"  - {step}")
 
     # 返回详细状态（支持可视化）
     result = {
@@ -3474,17 +3440,19 @@ async def _handle_stage_report(arguments: dict) -> list:
         "trend": trend,
         "mcp_calls": mcp_calls,
         "artifact_verification": artifact_verification,
+        # display 只包含状态信息，详细内容由宿主 agent 在对话中生成
         "display": {
             "title": f"📊 阶段报告：{stage_name}",
-            "content": "\n".join(display_lines),
+            "content": f"{confidence_heat} {stage_name} 阶段完成，置信度 {calibrated_score}/100",
         },
+        # host_instruction 告诉宿主 agent 必须在对话中做什么
         "host_instruction": (
-            f"阶段报告已生成。请在你的回复中：\n"
-            f"1. 用自己的语言总结阶段完成情况\n"
-            f"2. 分析置信度 {calibrated_score}/100 的含义和风险\n"
-            f"3. 如果有校准调整，解释调整原因\n"
-            f"4. 如果有 Agent 警告，说明需要采取的行动\n"
-            f"5. 给出下一步的具体行动建议"
+            f"阶段报告已生成（置信度 {calibrated_score}/100，原始 {confidence_score}/100）。请在你的回复中用自己的语言详细描述：\n"
+            f"1. 本阶段完成情况（完成项、风险项）\n"
+            f"2. 置信度校准详情（校准因子、调整幅度、趋势）\n"
+            f"3. 产物验证结果和 Agent 状态\n"
+            f"4. 下一步行动建议\n"
+            f"不要只展示 MCP 返回值，要产出你自己的分析和总结。"
         ),
         "message": f"✅ 阶段报告已记录：{stage_name}，置信度 {calibrated_score}/100 (原始: {confidence_score})" + (f"；Agent 警告: {'; '.join(agent_warnings)}" if agent_warnings else "")
     }
@@ -3788,21 +3756,7 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
     missing_display = [_get_agent_display_name(a) for a in missing_agents]
     parallel_display = [_get_agent_display_name(a) for a in parallel_with]
 
-    # 构建 display 字段
-    display_lines = [
-        f"**派遣对象:** {display_name}",
-        f"**角色定义:** {agent_def.get('role', '未知')}",
-        f"**核心能力:** {', '.join(agent_def.get('capabilities', []))}",
-        f"**任务描述:** {task_description}",
-        f"**是否必须:** {'✅ 是' if is_required else '⚠️ 否（可选）'}",
-        f"**dispatch_id:** `{dispatch_id}`",
-    ]
-    if missing_display:
-        display_lines.append(f"**还有未派遣的必须 Agent:** {', '.join(missing_display)}")
-    if parallel_display:
-        display_lines.append(f"**可并行派遣:** {', '.join(parallel_display)}")
-
-    # 返回结果，包含宿主 agent 必须执行的行动指引
+    # 返回结果，display 只包含状态信息，详细内容由宿主 agent 在对话中生成
     result = {
         "status": "registered",
         "dispatch_id": dispatch_id,
@@ -3814,26 +3768,38 @@ async def _handle_dispatch_agent(arguments: dict) -> list:
         "discussion_round": discussion_round,
         "is_required": is_required,
         "missing_agents": missing_agents,
+        "missing_agents_display": missing_display,
         "parallel_with": parallel_with,
+        "parallel_with_display": parallel_display,
         "parallel_groups": parallel_groups,
         "output_required": True,
+        # display 只包含状态信息
         "display": {
             "title": f"🤖 Agent 派遣：{display_name}",
-            "content": "\n".join(display_lines),
-            "action_required": f"⛔ 必须使用平台 subagent 能力实际派遣此 Agent，然后调用 reqflow_agent_confirm(dispatch_id='{dispatch_id}', status='completed') 确认完成",
+            "content": f"✅ {display_name} 已注册，dispatch_id: {dispatch_id}",
         },
+        # host_instruction 告诉宿主 agent 必须在对话中做什么
         "host_instruction": (
-            f"你刚刚注册了 {display_name} 的派遣意图。现在你必须：\n"
-            f"1. 使用你的 subagent 能力（Claude Code 用 Agent tool）实际派遣 {display_name}\n"
-            f"2. 将以下 prompt 作为 subagent 的任务描述：\n"
+            f"你刚刚注册了 {display_name} 的派遣意图。现在你必须在对话中：\n"
+            f"1. 说明为什么派遣 {display_name}（角色定义：{agent_def.get('role', '未知')}，能力：{', '.join(agent_def.get('capabilities', []))}）\n"
+            f"2. 描述 {display_name} 的任务：{task_description}\n"
+            f"3. 使用你的 subagent 能力（Claude Code 用 Agent tool）实际派遣 {display_name}\n"
+            f"4. 将以下 prompt 作为 subagent 的任务描述：\n"
             f"   {agent_def.get('prompt_template', '').format(task=task_description)}\n"
-            f"3. 派遣完成后，调用 reqflow_agent_confirm(dispatch_id='{dispatch_id}', status='completed', conclusion='Subagent 的实际结论内容') 确认\n"
-            f"4. 在你的回复中，以自己的语言详细描述 {display_name} 的工作过程和结论，不要只展示 MCP 返回值"
+            f"5. 派遣完成后，调用 reqflow_agent_confirm(dispatch_id='{dispatch_id}', status='completed', conclusion='Subagent 的实际结论内容') 确认\n"
+            f"6. 在你的回复中，以自己的语言详细描述 {display_name} 的工作过程和结论"
         ),
-        "message": f"⚠️ Agent 派遣已注册：{display_name}（dispatch_id: {dispatch_id}）",
-        "next_action": f"⛔ 必须使用平台 subagent 能力实际派遣 {display_name}，然后调用 reqflow_agent_confirm(dispatch_id='{dispatch_id}', status='completed') 确认完成",
+        "message": f"✅ {display_name} 已注册（dispatch_id: {dispatch_id}）",
         "blocking": is_required,
     }
+
+    # 添加可并行派遣信息
+    if parallel_display:
+        result["parallel_hint"] = f"可与 {', '.join(parallel_display)} 并行派遣"
+
+    # 添加未派遣必须 Agent 信息
+    if missing_display:
+        result["missing_hint"] = f"还有未派遣的必须 Agent：{', '.join(missing_display)}"
 
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
@@ -3887,16 +3853,8 @@ async def _handle_agent_confirm(arguments: dict) -> list:
     agent_role = target["agent_role"]
     display_name = _get_agent_display_name(agent_role)
 
-    # 构建 display 字段
+    # 返回结果，display 只包含状态信息
     status_icon = {"completed": "✅", "failed": "❌", "dispatched": "🚀"}.get(status, "📝")
-    display_lines = [
-        f"**Agent:** {display_name}",
-        f"**状态:** {status_icon} {status}",
-        f"**dispatch_id:** `{dispatch_id}`",
-    ]
-    if conclusion:
-        display_lines.append(f"**结论:** {conclusion}")
-
     result = {
         "status": "confirmed",
         "dispatch_id": dispatch_id,
@@ -3904,18 +3862,21 @@ async def _handle_agent_confirm(arguments: dict) -> list:
         "agent_nickname": _get_agent_nickname(agent_role),
         "agent_display_name": display_name,
         "new_status": status,
+        "conclusion": conclusion,
+        # display 只包含状态信息
         "display": {
             "title": f"📡 Agent 确认：{display_name}",
-            "content": "\n".join(display_lines),
+            "content": f"{status_icon} {display_name} 状态已更新为 {status}",
         },
+        # host_instruction 告诉宿主 agent 必须在对话中做什么
         "host_instruction": (
-            f"{display_name} 已确认完成。请在你的回复中用自己的语言详细描述：\n"
+            f"{display_name} 已确认完成（{status}）。请在你的回复中用自己的语言详细描述：\n"
             f"1. {display_name} 的具体工作过程\n"
             f"2. {display_name} 得出的结论和发现\n"
             f"3. 这些结论对当前阶段的影响\n"
             f"不要只展示 MCP 返回值，要产出你自己的分析和总结。"
         ) if status == "completed" else "",
-        "message": f"✅ {display_name} 状态已更新为 {status}",
+        "message": f"{status_icon} {display_name} 状态已更新为 {status}",
     }
 
     return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
@@ -4327,14 +4288,13 @@ async def _handle_cross_validate(arguments: dict) -> list:
 
 async def _handle_debate(arguments: dict) -> list:
     """
-    结构化对抗辩论。
+    结构化对抗辩论 — 真实多 Agent 交互。
 
     流程：
-    1. 独立分析 — 各 Agent 独立完成任务
-    2. 观点呈现 — 展示各自结论
-    3. 对抗辩论 — 针对分歧点辩论
-    4. 共识收敛 — 检测稳定性
-    5. 最终裁决 — 加权投票
+    1. 并行派遣 — 所有 Agent 并行独立分析
+    2. 交叉评论 — 每个 Agent 必须评论其他 Agent 的结论
+    3. 迭代收敛 — 重复直到观点稳定
+    4. 最终裁决 — 加权投票
     """
     import uuid
 
@@ -4397,29 +4357,7 @@ async def _handle_debate(arguments: dict) -> list:
             "agent_display_name": _get_agent_display_name(agent_role),
         })
 
-    # 构建 display 字段
-    display_lines = [
-        f"**辩论议题:** {topic}",
-        f"**讨论阶段:** {stage}",
-        f"**最大轮次:** {max_rounds}",
-        f"**辩论 ID:** `{debate_id}`",
-        "",
-        "### 参与角色",
-    ]
-
-    for rd in role_descriptions:
-        display_lines.append(f"  {rd['icon']} **{rd['name']}** — {rd['agent_display_name']}")
-        display_lines.append(f"    关注点：{', '.join(rd['focus'])}")
-
-    display_lines.append("")
-    display_lines.append("### 辩论流程")
-    display_lines.append("1. 🔍 **独立分析** — 各 Agent 独立完成任务，不看其他 Agent 的结果")
-    display_lines.append("2. 📢 **观点呈现** — 收集各 Agent 的初始结论和置信度")
-    display_lines.append("3. ⚔️ **对抗辩论** — 针对分歧点进行辩论，每轮必须回应其他 Agent 的质疑")
-    display_lines.append("4. 🎯 **共识收敛** — 检测稳定性，如果观点不再变化则终止")
-    display_lines.append("5. 🏛️ **最终裁决** — 基于置信度加权投票，记录最终共识")
-
-    # 返回结果
+    # 返回结果 - display 只包含状态信息
     result = {
         "status": "debate_started",
         "debate_id": debate_id,
@@ -4428,25 +4366,39 @@ async def _handle_debate(arguments: dict) -> list:
         "agents": role_descriptions,
         "max_rounds": max_rounds,
         "output_required": True,
+        # display 只包含状态信息
         "display": {
             "title": f"🎭 结构化辩论：{topic}",
-            "content": "\n".join(display_lines),
+            "content": f"辩论已启动，{len(agents)} 个角色，最大 {max_rounds} 轮，debate_id: {debate_id}",
         },
+        # host_instruction 告诉宿主 agent 必须在对话中做什么
         "host_instruction": (
-            f"辩论已启动。你必须协调以下真实辩论流程：\n\n"
-            f"**第一步：独立分析**\n"
-            f"分别派遣各角色 Agent 独立完成分析任务，收集各自结论。\n\n"
-            f"**第二步：观点呈现**\n"
-            f"用你自己的语言总结每位 Agent 的核心观点和置信度，调用 reqflow_debate_round 记录。\n\n"
-            f"**第三步：对抗辩论**\n"
-            f"这是最关键的环节！你必须：\n"
-            f"- 让每位 Agent 评论其他 Agent 的观点\n"
-            f"- '乐观派，你怎么看悲观派的风险评估？悲观派，你对乐观派的方案有何回应？'\n"
-            f"- 每轮辩论都要记录各方的交锋要点\n"
-            f"- 如果所有 Agent 意见一致，强制要求至少一个提出反对意见\n\n"
-            f"**第四步：共识收敛**\n"
-            f"当观点不再变化时，调用 reqflow_debate_conclude 记录最终共识。\n\n"
-            f"⛔ 重要：你必须在回复中用自己的语言详细描述辩论过程，展示各方的真实交锋，不要只展示 MCP 返回值。"
+            f"辩论已启动（debate_id: {debate_id}）。你必须执行真实的多 Agent 辩论流程：\n\n"
+            f"**第一步：并行派遣（必须并行）**\n"
+            f"使用 Agent tool 并行派遣以下 {len(agents)} 个 Agent，每个 Agent 独立分析议题「{topic}」：\n"
+            + "\n".join(f"  - {rd['agent_display_name']}（{rd['role']}）: 关注 {', '.join(rd['focus'])}" for rd in role_descriptions) +
+            f"\n\n每个 Agent 的 prompt 必须包含：\n"
+            f"  1. 辩论议题和你的角色定义\n"
+            f"  2. 要求输出：结论、置信度(0-1)、推理过程\n"
+            f"  3. 明确说明这是独立分析，不要参考其他 Agent\n\n"
+            f"**第二步：记录初始观点**\n"
+            f"收集所有 Agent 的返回后，调用 reqflow_debate_round 记录第一轮（round=1），opinions 格式：\n"
+            f'[{{"role": "optimist", "agent": "research-agent", "conclusion": "...", "confidence": 0.8, "reasoning": "..."}}]\n\n'
+            f"**第三步：交叉评论（核心环节）**\n"
+            f"再次并行派遣所有 Agent，这次每个 Agent 的 prompt 必须包含：\n"
+            f"  1. 所有其他 Agent 的结论和推理（从上一轮 opinions 中提取）\n"
+            f"  2. 要求：审视其他 Agent 的结论，指出你同意和不同意的地方，给出你的修正结论\n"
+            f"  3. 输出格式同上，加上 cross_commentary 字段说明对其他 Agent 的评论\n\n"
+            f"**第四步：迭代**\n"
+            f"调用 reqflow_debate_round 记录新一轮。如果 is_stable=true 或达到 max_rounds，进入第五步。\n"
+            f"否则重复第三步。\n\n"
+            f"**第五步：最终裁决**\n"
+            f"调用 reqflow_debate_conclude 记录最终共识。\n\n"
+            f"⛔ 关键要求：\n"
+            f"- 每轮辩论必须并行派遣 Agent，不要串行\n"
+            f"- 每个 Agent 必须看到其他 Agent 的结论并做出回应\n"
+            f"- 在对话中用自己的语言描述辩论过程和各方交锋\n"
+            f"- 不要只展示 MCP 返回值"
         ),
         "message": f"🎭 辩论已启动：{topic} ({len(agents)} 个角色，最大 {max_rounds} 轮)"
     }
@@ -4455,14 +4407,14 @@ async def _handle_debate(arguments: dict) -> list:
 
 
 async def _handle_debate_round(arguments: dict) -> list:
-    """记录辩论轮次。"""
+    """记录辩论轮次 — 支持交叉评论。"""
     import uuid
 
     run_id = arguments.get("run_id", "")
     debate_id = arguments.get("debate_id", "")
     round_num = arguments.get("round", 0)
     opinions = arguments.get("opinions", [])
-    # opinions 格式: [{"role": "optimist", "conclusion": "...", "confidence": 0.8, "reasoning": "..."}]
+    # opinions 格式: [{"role": "optimist", "conclusion": "...", "confidence": 0.8, "reasoning": "...", "cross_commentary": {"pessimist": "..."}}]
 
     # 应用防从众机制
     opinions = _enforce_dissent(opinions)
@@ -4500,56 +4452,37 @@ async def _handle_debate_round(arguments: dict) -> list:
 
     is_stable = _detect_stability(consensus_history)
 
-    # 构建 display 字段（使用昵称）
-    display_lines = [
-        f"**辩论 ID:** `{debate_id}`",
-        f"**轮次:** 第 {round_num} 轮",
-        f"**稳定性:** {'✅ 已稳定' if is_stable else '🔄 未稳定'}",
-        "",
-        "### 各方观点",
-    ]
-
-    for opinion in opinions:
-        role_info = DEBATE_ROLES.get(opinion.get("role", ""), {})
-        icon = role_info.get("icon", "❓")
-        forced = " ⚠️ [强制异见]" if opinion.get("forced_dissent") else ""
-        agent_name = _get_agent_display_name(opinion.get("agent", opinion.get("role", "?")))
-        display_lines.append(f"  {icon} **{role_info.get('name', opinion.get('role', '?'))}**{forced}")
-        display_lines.append(f"    代表: {agent_name}")
-        display_lines.append(f"    结论: {opinion.get('conclusion', '无')}")
-        display_lines.append(f"    置信度: {opinion.get('confidence', 0):.0%}")
-        if opinion.get("reasoning"):
-            display_lines.append(f"    推理: {opinion.get('reasoning', '')}")
-        if opinion.get("forced_dissent"):
-            display_lines.append(f"    指令: {opinion.get('instruction', '')}")
-        display_lines.append("")
-
-    if is_stable:
-        display_lines.append("🎯 **辩论已稳定，可以进入最终裁决阶段**")
-        display_lines.append("请调用 `reqflow_debate_conclude` 记录最终共识")
-    else:
-        display_lines.append("🔄 **辩论未稳定，需要继续下一轮**")
-        display_lines.append("请派遣 Agent 继续辩论，回应其他 Agent 的质疑")
-
-    # 生成 host 指令
+    # 构建 host_instruction — 引导宿主 agent 产出真实分析
     if is_stable:
         host_instruction = (
-            f"辩论轮次 {round_num} 已稳定。请：\n"
+            f"辩论轮次 {round_num} 已稳定（{len(opinions)} 个观点）。请在对话中：\n"
             f"1. 用自己的语言总结各方观点的演变过程\n"
-            f"2. 分析为什么观点趋于稳定\n"
-            f"3. 调用 reqflow_debate_conclude 记录最终共识\n"
-            f"4. 在回复中详细描述辩论的收获和结论"
+            f"2. 分析交叉评论中的关键分歧和共识点\n"
+            f"3. 解释为什么观点趋于稳定\n"
+            f"4. 调用 reqflow_debate_conclude 记录最终共识\n"
+            f"⛔ 不要只展示 MCP 返回值，要产出你自己的分析。"
         )
     else:
+        # 构建下一轮的交叉评论指引
+        agent_list = [f"{_get_agent_display_name(o.get('agent', o.get('role', '?')))}（{o.get('role')}）" for o in opinions]
+        cross_guide = []
+        for o in opinions:
+            role = o.get("role", "?")
+            others = [r for r in [op.get("role") for op in opinions] if r != role]
+            if others:
+                cross_guide.append(f"  - {role} 必须回应 {', '.join(others)} 的结论")
+
         host_instruction = (
-            f"辩论轮次 {round_num} 未稳定。请：\n"
-            f"1. 用自己的语言分析各方观点的分歧点\n"
-            f"2. 组织下一轮辩论，让各方回应其他人的质疑\n"
-            f"3. 特别关注置信度较低的观点，可能需要更多论证\n"
-            f"4. 在回复中展示各方的交锋过程"
+            f"辩论轮次 {round_num} 未稳定（{len(opinions)} 个观点）。请执行下一轮辩论：\n\n"
+            f"**并行派遣所有 Agent 进行交叉评论：**\n"
+            + "\n".join(cross_guide) +
+            f"\n\n每个 Agent 的 prompt 必须包含上一轮所有其他 Agent 的结论。\n"
+            f"要求每个 Agent：审视其他 Agent 的结论 → 指出同意/不同意的地方 → 给出修正结论。\n\n"
+            f"收集返回后调用 reqflow_debate_round（round={round_num + 1}）记录。\n"
+            f"⛔ 在对话中用自己的语言描述各方的交锋过程。"
         )
 
-    # 返回结果
+    # 返回结果 - display 只包含状态信息
     result = {
         "status": "round_recorded",
         "debate_id": debate_id,
@@ -4557,10 +4490,12 @@ async def _handle_debate_round(arguments: dict) -> list:
         "is_stable": is_stable,
         "opinions_count": len(opinions),
         "output_required": True,
+        # display 只包含状态信息
         "display": {
             "title": f"💬 辩论轮次 {round_num}",
-            "content": "\n".join(display_lines),
+            "content": f"{'🎯 已稳定' if is_stable else '🔄 未稳定'}，{len(opinions)} 个观点，debate_id: {debate_id}",
         },
+        # host_instruction 告诉宿主 agent 必须在对话中做什么
         "host_instruction": host_instruction,
         "message": f"{'🎯 辩论已稳定' if is_stable else '🔄 辩论未稳定'}：轮次 {round_num}，{len(opinions)} 个观点"
     }
@@ -4598,35 +4533,7 @@ async def _handle_debate_conclude(arguments: dict) -> list:
     # 加权投票
     vote_result = _weighted_vote(all_opinions)
 
-    # 构建 display 字段（使用昵称）
-    display_lines = [
-        f"**辩论 ID:** `{debate_id}`",
-        f"**最终共识:** {final_consensus}",
-        "",
-        "### 加权投票结果",
-        f"  胜出结论: {vote_result['winner']}",
-        f"  共识度: {vote_result['consensus_level']:.0%}",
-        "",
-        "### 各结论得票",
-    ]
-
-    for conclusion, score in vote_result.get("all_votes", {}).items():
-        display_lines.append(f"  - {conclusion}: {score:.2f}")
-
-    if dissenting_opinions:
-        display_lines.append("")
-        display_lines.append("### 保留异议")
-        for dissent in dissenting_opinions:
-            role_info = DEBATE_ROLES.get(dissent.get("role", ""), {})
-            icon = role_info.get("icon", "❓")
-            agent_name = _get_agent_display_name(dissent.get("agent", dissent.get("role", "?")))
-            display_lines.append(f"  {icon} **{role_info.get('name', dissent.get('role', '?'))}** ({agent_name})")
-            display_lines.append(f"    {dissent.get('opinion', '')}")
-
-    display_lines.append("")
-    display_lines.append("✅ **辩论已结束，共识已记录**")
-
-    # 返回结果
+    # 返回结果 - display 只包含状态信息
     result = {
         "status": "concluded",
         "debate_id": debate_id,
@@ -4634,18 +4541,20 @@ async def _handle_debate_conclude(arguments: dict) -> list:
         "vote_result": vote_result,
         "dissenting_opinions": dissenting_opinions,
         "output_required": True,
+        # display 只包含状态信息
         "display": {
             "title": f"🏛️ 辩论结论",
-            "content": "\n".join(display_lines),
+            "content": f"共识度 {vote_result['consensus_level']:.0%}，{len(dissenting_opinions)} 项异议，debate_id: {debate_id}",
         },
+        # host_instruction 告诉宿主 agent 必须在对话中做什么
         "host_instruction": (
-            f"辩论已结束。请在你的回复中：\n"
-            f"1. 用自己的语言总结整个辩论过程\n"
-            f"2. 分析各方观点的演变和关键转折点\n"
-            f"3. 解释最终共识是如何达成的\n"
-            f"4. 如果有保留异议，说明这些异议的价值\n"
-            f"5. 给出基于辩论结论的下一步行动建议\n"
-            f"⛔ 重要：必须展示辩论的完整过程，不要只展示最终结论"
+            f"辩论已结束（debate_id: {debate_id}，共识度 {vote_result['consensus_level']:.0%}）。请在对话中用自己的语言详细描述：\n"
+            f"1. 整个辩论过程（从初始观点到最终共识的演变）\n"
+            f"2. 各轮交叉评论中的关键分歧和转折点\n"
+            f"3. 最终共识是如何达成的，胜出结论为什么胜出\n"
+            f"4. 如果有保留异议（{len(dissenting_opinions)} 项），说明这些异议的价值\n"
+            f"5. 基于辩论结论的下一步行动建议\n"
+            f"⛔ 必须展示辩论的完整过程和各方交锋，不要只展示最终结论。"
         ),
         "message": f"🏛️ 辩论已结束：共识度 {vote_result['consensus_level']:.0%}，{len(dissenting_opinions)} 项异议"
     }
