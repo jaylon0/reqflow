@@ -112,7 +112,7 @@ ReqFlow 根据需求内容自动路由到不同级别，每个级别映射到 YA
 读取 Execution Skill 后，**必须按顺序执行每一个阶段**。不得跳过，不得提前结束。
 
 ### 规则 2: 每阶段必须报告
-每个阶段完成后，**必须调用 `reqflow_report`**。
+每个阶段完成后，**必须先在对话中生成完整分析，再调用 `reqflow_stage_report` 验证**。如果返回 rejected，补充后重新调用。
 
 ### 规则 3: 门禁必须验证
 指定的门禁检查点，**必须调用 `reqflow_verify`**。未通过则修复后重新验证。
@@ -229,9 +229,11 @@ reqflow_agent_confirm(
     run_id="<run_id>",
     dispatch_id="<从 reqflow_dispatch_agent 返回>",
     status="completed",
-    conclusion="Agent 结论摘要"
+    conclusion="Subagent 的实际结论内容（至少 50 字）"
 )
 ```
+
+⛔ conclusion 必须是非空的真实结论，MCP 会验证内容长度。
 
 ### ⛔ 关键阶段讨论轮次强制要求
 
@@ -302,28 +304,31 @@ reqflow_discussion_round(
 
 ```
 ① reqflow_debate(stage="技术方案", topic="架构选型")
-    → 返回 debate_id, 角色分配, host_instruction
+    → 返回 debate_id, 角色列表
     ↓
 ② ⛔ 并行派遣所有 Agent 独立分析（使用 Agent tool 并行调用）
-    收集各方结论后调用 reqflow_debate_round 记录第一轮
+    收集各方结论后，在对话中描述各方观点
+    调用 reqflow_debate_round 记录第一轮（必须包含 host_debate_analysis）
     ↓
 ③ ⛔ 并行派遣所有 Agent 进行交叉评论
     每个 Agent 的 prompt 必须包含其他 Agent 的结论
     每个 Agent 必须回应其他 Agent 的结论
-    收集后调用 reqflow_debate_round 记录新一轮
+    收集后，在对话中描述交锋过程
+    调用 reqflow_debate_round 记录新一轮
     ↓
 ④ 重复③直到 is_stable=true 或达到 max_rounds
     ↓
-⑤ reqflow_debate_conclude(debate_id="<debate_id>")
-    → 返回共识结论, 加权投票结果
+⑤ 在对话中描述辩论过程和最终共识
+    调用 reqflow_debate_conclude（必须包含 final_consensus，至少 100 字）
 ```
 
-**⛔ 辩论轮次 opinions 格式（必须包含交叉评论）：**
+**⛔ 辩论轮次调用格式（必须包含 host_debate_analysis 和 cross_commentary）：**
 
 ```python
 reqflow_debate_round(
     debate_id="<debate_id>",
     round=1,
+    host_debate_analysis="你在对话中生成的辩论分析（至少 100 字）",
     opinions=[
         {
             "role": "optimist",
@@ -340,62 +345,39 @@ reqflow_debate_round(
 )
 ```
 
-### 辅助 Skill 调用指引
+⛔ **如果 MCP 返回 rejected，说明你的分析不达标，补充后重新调用。**
 
-根据阶段上下文，可调用相关辅助 Skill 增强能力：
+### ⛔ Skill 强制调用规则
 
-| 阶段 | 推荐辅助 Skill | 调用时机 |
-|------|----------------|----------|
-| PRD理解 | `prd-review` | 审查 PRD 完整性 |
-| 技术方案 | `tech-plan`, `security-audit`, `impact-analysis` | 方案设计、安全评估、影响分析 |
-| 实施计划 | `test-gen` | 生成测试用例 |
-| Agent执行 | `debug`, `refactor` | 调试问题、重构代码 |
-| 代码审查 | `code-review`, `security-audit`, `vuln-scan`, `code-quality`, `adversarial-review` | 代码审查、安全扫描、质量检查、对抗性审查 |
-| 交付验证 | `delivery-check`, `test-gen`, `test-coverage` | 交付验证、测试补充、覆盖率分析 |
-| 总结 | `write-docs`, `retro` | 文档撰写、复盘分析 |
+**以下阶段必须调用对应 Skill，否则 `reqflow_stage_report` 会返回 rejected：**
 
-### ⛔ Skill 调用追踪要求
+| 阶段 | 必须调用（否则 rejected） | 可选调用 |
+|------|---------------------------|----------|
+| PRD理解 | `/prd-review` | - |
+| 技术方案 | `/tech-plan`, `/security-audit` | `/impact-analysis` |
+| 代码审查 | `/code-review`, `/security-audit` | `/vuln-scan`, `/code-quality`, `/adversarial-review` |
+| 交付验证 | `/delivery-check` | `/test-gen`, `/test-coverage` |
+| 总结 | `/write-docs` | `/retro` |
 
-每次调用 Skill（无论是宿主 Agent 还是 subagent），⛔ **必须** 调用 `reqflow_skill_invoke` 记录：
+**调用流程：**
+1. 在对话中执行阶段任务
+2. 调用对应的 Skill（如 `/prd-review`）
+3. Skill 执行完成后，调用 `reqflow_skill_invoke(result_summary="至少 30 字的结果摘要")` 记录
+4. 然后调用 `reqflow_stage_report` 验证
 
-```
-reqflow_skill_invoke(
-    run_id="<run_id>",
-    stage="<阶段名称>",
-    skill_name="<Skill 名称>",
-    invoked_by="host",  # host 或 subagent
-    agent_role="",  # 如果是 subagent 调用，填写 agent 角色
-    context="为什么调用这个 Skill",
-    result_summary="Skill 执行结果摘要"
-)
-```
+⛔ **不得跳过 required Skill 调用。MCP 工具会检查 Skill 调用记录，未调用则 rejected。**
+⛔ **result_summary 必须至少 30 字，不得写占位符。**
 
-**追踪要求：**
-1. **宿主 Agent 调用 Skill** — 必须记录，invoked_by="host"
-2. **Subagent 调用 Skill** — 必须记录，invoked_by="subagent"，agent_role="对应角色"
-3. **Skill 调用日志** — 在对话中输出详细的 Skill 调用过程和结果
+## ⛔ MCP 工具验证架构
 
-**示例：**
-```
-📚 reqflow_skill_invoke(skill_name="prd-review", invoked_by="host")
-   → Skill 调用已记录：prd-review (由宿主 Agent 在 PRD理解 阶段调用)
-   → 宿主 Agent 必须在对话中描述：为什么调用、执行过程、关键发现
-```
-
-## ⛔ MCP 工具与对话输出分离规则
-
-**核心原则：MCP 返回的 `display` 只包含状态信息，详细内容由宿主 Agent 在对话中生成。**
+**核心原则：MCP 工具是验证者，不是内容生成者。你必须先在对话中生成完整内容，再调 MCP 验证。**
 
 ### 强制约束
 
-1. **MCP 返回的 `host_instruction` 字段必须遵循** — 每个 MCP 工具返回的 JSON 中包含 `host_instruction` 字段，明确指示宿主 Agent 必须执行的操作
-2. **宿主 Agent 必须产出真实输出** — 不得直接展示 MCP 返回值，必须用自己的语言详细描述：
-   - Agent 的工作过程和结论
-   - 讨论的交锋过程
-   - 置信度的含义和风险
-   - 下一步行动建议
-3. **使用 Agent 昵称** — MCP 返回的 `agent_nickname` 和 `agent_display_name` 字段提供友好昵称（如"小研"、"架构师"），在对话中必须使用昵称而非原始 agent_role
-4. **MCP 返回值中的 `output_required: true`** — 表示 agent 必须在对话中输出内容
+1. **先生成，再验证** — 每个 MCP 工具调用前，你必须先在对话中生成完整分析
+2. **rejected 必须修复** — 如果 MCP 返回 `status: "rejected"`，根据 `missing` 字段补充后重新调用
+3. **不得展示 MCP 返回值** — MCP 返回只有状态信息（status/stage/progress），没有可展示内容
+4. **使用 Agent 昵称** — 在对话中使用"小研"、"架构师"等昵称，不用原始 agent_role
 
 ### MCP 即时反馈
 

@@ -399,6 +399,20 @@ class WorkflowLoader:
         if "gates" in stage:
             step["gates"] = stage["gates"]
 
+        # Extended skill fields
+        if "required_skills" in stage:
+            step["required_skills"] = stage["required_skills"]
+        if "optional_skills" in stage:
+            step["optional_skills"] = stage["optional_skills"]
+        if "methodology_skills" in stage:
+            step["methodology_skills"] = stage["methodology_skills"]
+
+        # Topology and debate fields
+        if "topology" in stage:
+            step["topology"] = stage["topology"]
+        if "requires_debate" in stage:
+            step["requires_debate"] = stage["requires_debate"]
+
         return step
 
     @staticmethod
